@@ -2,6 +2,8 @@
 const ctx = canvas.getContext("2d");
 const focusInfo = document.getElementById("focusInfo");
 const resetBtn = document.getElementById("resetBtn");
+const zoomOutBtn = document.getElementById("zoomOutBtn");
+const zoomInBtn = document.getElementById("zoomInBtn");
 const searchInput = document.getElementById("searchInput");
 const searchResults = document.getElementById("searchResults");
 
@@ -247,6 +249,8 @@ let isPanning = false;
 let panAnchor = null;
 let pointerStart = null;
 let focusedId = null;
+const activePointers = new Map();
+let pinchState = null;
 
 function generationLabel(colIndex) {
   const column = columns[colIndex];
@@ -287,6 +291,27 @@ function toWorld(clientX, clientY) {
     x: (x - viewport.x) / viewport.scale,
     y: (y - viewport.y) / viewport.scale,
   };
+}
+
+function clampScale(value) {
+  return Math.max(minScale, Math.min(maxScale, value));
+}
+
+function zoomAtClientPoint(clientX, clientY, targetScale) {
+  const rect = canvas.getBoundingClientRect();
+  const world = toWorld(clientX, clientY);
+  const nextScale = clampScale(targetScale);
+  viewport.scale = nextScale;
+  viewport.x = clientX - rect.left - world.x * nextScale;
+  viewport.y = clientY - rect.top - world.y * nextScale;
+  draw();
+}
+
+function zoomAtCenter(factor) {
+  const rect = canvas.getBoundingClientRect();
+  const cx = rect.left + rect.width / 2;
+  const cy = rect.top + rect.height / 2;
+  zoomAtClientPoint(cx, cy, viewport.scale * factor);
 }
 
 function roundedRect(x, y, w, h, r) {
@@ -568,8 +593,29 @@ function renderSearchResults(keyword) {
 }
 
 canvas.addEventListener("pointerdown", (e) => {
+  activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
   canvas.setPointerCapture(e.pointerId);
   pointerStart = { x: e.clientX, y: e.clientY };
+
+  if (activePointers.size >= 2) {
+    const points = [...activePointers.values()];
+    const a = points[0];
+    const b = points[1];
+    const centerX = (a.x + b.x) / 2;
+    const centerY = (a.y + b.y) / 2;
+    const startDist = Math.hypot(a.x - b.x, a.y - b.y) || 1;
+    const startWorld = toWorld(centerX, centerY);
+    pinchState = {
+      startDist,
+      startScale: viewport.scale,
+      startWorld,
+    };
+    pressedNodeId = null;
+    pressedBlank = false;
+    isPanning = false;
+    panAnchor = null;
+    return;
+  }
 
   const hit = findNodeAt(e.clientX, e.clientY);
   if (hit) {
@@ -583,6 +629,26 @@ canvas.addEventListener("pointerdown", (e) => {
 });
 
 canvas.addEventListener("pointermove", (e) => {
+  if (activePointers.has(e.pointerId)) {
+    activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  }
+
+  if (pinchState && activePointers.size >= 2) {
+    const points = [...activePointers.values()];
+    const a = points[0];
+    const b = points[1];
+    const centerX = (a.x + b.x) / 2;
+    const centerY = (a.y + b.y) / 2;
+    const currentDist = Math.hypot(a.x - b.x, a.y - b.y) || 1;
+    const nextScale = clampScale(pinchState.startScale * (currentDist / pinchState.startDist));
+    const rect = canvas.getBoundingClientRect();
+    viewport.scale = nextScale;
+    viewport.x = centerX - rect.left - pinchState.startWorld.x * nextScale;
+    viewport.y = centerY - rect.top - pinchState.startWorld.y * nextScale;
+    draw();
+    return;
+  }
+
   if (isPanning) {
     viewport.x = e.clientX - panAnchor.x;
     viewport.y = e.clientY - panAnchor.y;
@@ -591,6 +657,18 @@ canvas.addEventListener("pointermove", (e) => {
 });
 
 canvas.addEventListener("pointerup", (e) => {
+  activePointers.delete(e.pointerId);
+
+  if (pinchState && activePointers.size < 2) {
+    pinchState = null;
+    pressedNodeId = null;
+    pressedBlank = false;
+    isPanning = false;
+    panAnchor = null;
+    pointerStart = null;
+    return;
+  }
+
   const moved =
     pointerStart &&
     Math.hypot(e.clientX - pointerStart.x, e.clientY - pointerStart.y) > 5;
@@ -610,16 +688,22 @@ canvas.addEventListener("pointerup", (e) => {
   pointerStart = null;
 });
 
+canvas.addEventListener("pointercancel", (e) => {
+  activePointers.delete(e.pointerId);
+  if (activePointers.size < 2) {
+    pinchState = null;
+  }
+  pressedNodeId = null;
+  pressedBlank = false;
+  isPanning = false;
+  panAnchor = null;
+  pointerStart = null;
+});
+
 canvas.addEventListener("wheel", (e) => {
   e.preventDefault();
-  const rect = canvas.getBoundingClientRect();
-  const world = toWorld(e.clientX, e.clientY);
   const factor = e.deltaY < 0 ? 1.08 : 0.92;
-  const nextScale = Math.max(minScale, Math.min(maxScale, viewport.scale * factor));
-  viewport.scale = nextScale;
-  viewport.x = e.clientX - rect.left - world.x * nextScale;
-  viewport.y = e.clientY - rect.top - world.y * nextScale;
-  draw();
+  zoomAtClientPoint(e.clientX, e.clientY, viewport.scale * factor);
 });
 
 if (searchInput) {
@@ -638,6 +722,12 @@ if (searchInput) {
 }
 
 resetBtn.addEventListener("click", fitView);
+if (zoomInBtn) {
+  zoomInBtn.addEventListener("click", () => zoomAtCenter(1.12));
+}
+if (zoomOutBtn) {
+  zoomOutBtn.addEventListener("click", () => zoomAtCenter(0.88));
+}
 
 window.addEventListener("resize", () => {
   resizeCanvas();
