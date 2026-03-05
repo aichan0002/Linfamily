@@ -1,0 +1,38 @@
+﻿<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>林氏忠孝堂族譜</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header class="toolbar">
+      <h1>林氏忠孝堂族譜</h1>
+      <div class="actions">
+        <button id="resetBtn" type="button">重置視圖</button>
+      </div>
+    </header>
+    <main class="graph-wrap">
+      <canvas id="graphCanvas"></canvas>
+      <aside class="panel">
+        <h2>族譜操作</h2>
+        <ul>
+          <li>拖曳空白處：平移視圖</li>
+          <li>滑鼠滾輪：縮放</li>
+          <li>人物框固定位置（不可拖曳）</li>
+          <li>點擊節點：高亮該人的直系上下血脈</li>
+        </ul>
+        <p id="focusInfo">目前：顯示全部族譜</p>
+        <p class="hint">註：此圖依你提供的表格整理，若要補配偶、字輩註記或修正人名，我可以再幫你更新。</p>
+      </aside>
+    </main>
+    <script src="./familyData.js"></script>
+    <script src="./app.js"></script>
+  </body>
+</html>
+
+
+
+
+
