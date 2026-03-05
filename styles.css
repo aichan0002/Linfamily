@@ -81,11 +81,13 @@ body {
   border-radius: 14px;
   background: color-mix(in srgb, var(--surface) 92%, #fff 8%);
   padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
 .panel h2 {
-  margin-top: 0;
-  margin-bottom: 10px;
+  margin: 0;
   font-size: 17px;
 }
 
@@ -97,11 +99,84 @@ body {
 }
 
 #focusInfo {
-  margin-top: 16px;
-  margin-bottom: 8px;
+  margin: 0;
   padding-top: 10px;
   border-top: 1px solid var(--line);
   font-size: 14px;
+}
+
+.search-block {
+  margin: 0;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+
+.search-block h3 {
+  margin: 0 0 8px;
+  font-size: 15px;
+}
+
+#searchInput {
+  width: 100%;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+  padding: 8px 10px;
+  font-family: inherit;
+  font-size: 14px;
+}
+
+#searchInput:focus {
+  outline: 2px solid color-mix(in srgb, var(--accent) 35%, white 65%);
+  outline-offset: 1px;
+}
+
+.search-results {
+  margin-top: 8px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fffdf8;
+  max-height: 210px;
+  overflow: auto;
+}
+
+.search-empty {
+  padding: 10px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.search-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  padding: 8px 10px;
+  cursor: pointer;
+  font-family: inherit;
+  color: var(--text);
+}
+
+.search-item:last-child {
+  border-bottom: 0;
+}
+
+.search-item:hover {
+  background: var(--surface-soft);
+}
+
+.search-item strong {
+  font-weight: 700;
+}
+
+.search-item small {
+  display: block;
+  color: var(--muted);
+  margin-top: 2px;
+  font-size: 12px;
 }
 
 .hint {
@@ -119,5 +194,9 @@ body {
 
   #graphCanvas {
     min-height: 480px;
+  }
+
+  .search-results {
+    max-height: 180px;
   }
 }

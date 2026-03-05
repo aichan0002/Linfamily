@@ -24,6 +24,13 @@
           <li>點擊節點：高亮該人的直系上下血脈</li>
         </ul>
         <p id="focusInfo">目前：顯示全部族譜</p>
+
+        <section class="search-block" aria-labelledby="searchTitle">
+          <h3 id="searchTitle">關鍵字檢索</h3>
+          <input id="searchInput" type="text" placeholder="輸入姓名關鍵字" autocomplete="off" />
+          <div id="searchResults" class="search-results" role="listbox" aria-label="姓名檢索結果"></div>
+        </section>
+
         <p class="hint">註：此圖依你提供的表格整理，若要補配偶、字輩註記或修正人名，我可以再幫你更新。</p>
       </aside>
     </main>
@@ -31,8 +38,3 @@
     <script src="./app.js"></script>
   </body>
 </html>
-
-
-
-
-

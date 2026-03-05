@@ -2,6 +2,8 @@
 const ctx = canvas.getContext("2d");
 const focusInfo = document.getElementById("focusInfo");
 const resetBtn = document.getElementById("resetBtn");
+const searchInput = document.getElementById("searchInput");
+const searchResults = document.getElementById("searchResults");
 
 const columns = Array.isArray(window.FAMILY_COLUMNS)
   ? window.FAMILY_COLUMNS.map((c) => ({
@@ -246,6 +248,18 @@ let panAnchor = null;
 let pointerStart = null;
 let focusedId = null;
 
+function generationLabel(colIndex) {
+  const column = columns[colIndex];
+  if (!column) return "";
+  return `${column.generation}${column.marker ? ` ${column.marker}` : ""}`.trim();
+}
+
+function getParentLabel(node) {
+  if (!node.parents.length) return "";
+  const parent = nodeMap.get(node.parents[0]);
+  return parent ? parent.label : "";
+}
+
 function getBounds() {
   if (nodes.length === 0) {
     return { minX: -100, maxX: 100, minY: -100, maxY: 100, w: 200, h: 200 };
@@ -486,6 +500,73 @@ function updateFocusInfo() {
   focusInfo.textContent = `目前聚焦：${node.label}（直系高亮 ${focusSet.size - 1} 人）`;
 }
 
+function focusNodeById(nodeId, recenter = false) {
+  const node = nodeMap.get(nodeId);
+  if (!node) return;
+
+  focusedId = nodeId;
+  updateFocusInfo();
+
+  if (recenter) {
+    const targetScale = Math.max(viewport.scale, 0.62);
+    viewport.scale = targetScale;
+    viewport.x = canvas.clientWidth / 2 - node.x * targetScale;
+    viewport.y = canvas.clientHeight / 2 - node.y * targetScale;
+  }
+
+  draw();
+}
+
+function renderSearchResults(keyword) {
+  if (!searchResults) return;
+  searchResults.innerHTML = "";
+
+  if (!keyword) {
+    const empty = document.createElement("div");
+    empty.className = "search-empty";
+    empty.textContent = "輸入姓名關鍵字後顯示結果";
+    searchResults.appendChild(empty);
+    return;
+  }
+
+  const normalized = keyword.toLowerCase();
+  const matched = nodes
+    .filter((n) => n.label.toLowerCase().includes(normalized))
+    .sort((a, b) => a.label.localeCompare(b.label, "zh-Hant") || a.col - b.col || a.order - b.order)
+    .slice(0, 80);
+
+  if (matched.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "search-empty";
+    empty.textContent = "找不到符合的姓名";
+    searchResults.appendChild(empty);
+    return;
+  }
+
+  for (const node of matched) {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "search-item";
+
+    const title = document.createElement("strong");
+    title.textContent = node.label;
+
+    const info = document.createElement("small");
+    const parent = getParentLabel(node);
+    info.textContent = parent
+      ? `${generationLabel(node.col)} · 上代：${parent}`
+      : generationLabel(node.col);
+
+    item.appendChild(title);
+    item.appendChild(info);
+    item.addEventListener("click", () => {
+      focusNodeById(node.id, true);
+    });
+
+    searchResults.appendChild(item);
+  }
+}
+
 canvas.addEventListener("pointerdown", (e) => {
   canvas.setPointerCapture(e.pointerId);
   pointerStart = { x: e.clientX, y: e.clientY };
@@ -515,11 +596,11 @@ canvas.addEventListener("pointerup", (e) => {
     Math.hypot(e.clientX - pointerStart.x, e.clientY - pointerStart.y) > 5;
 
   if (!moved && pressedNodeId) {
-    focusedId = pressedNodeId;
-    updateFocusInfo();
+    focusNodeById(pressedNodeId, false);
   } else if (!moved && pressedBlank) {
     focusedId = null;
     updateFocusInfo();
+    draw();
   }
 
   pressedNodeId = null;
@@ -527,7 +608,6 @@ canvas.addEventListener("pointerup", (e) => {
   isPanning = false;
   panAnchor = null;
   pointerStart = null;
-  draw();
 });
 
 canvas.addEventListener("wheel", (e) => {
@@ -542,6 +622,21 @@ canvas.addEventListener("wheel", (e) => {
   draw();
 });
 
+if (searchInput) {
+  searchInput.addEventListener("input", () => {
+    renderSearchResults(searchInput.value.trim());
+  });
+
+  searchInput.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter") return;
+    const firstItem = searchResults?.querySelector(".search-item");
+    if (firstItem) {
+      firstItem.click();
+      e.preventDefault();
+    }
+  });
+}
+
 resetBtn.addEventListener("click", fitView);
 
 window.addEventListener("resize", () => {
@@ -552,3 +647,4 @@ window.addEventListener("resize", () => {
 resizeCanvas();
 measureNodeSizes();
 fitView();
+renderSearchResults("");
