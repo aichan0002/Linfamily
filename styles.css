@@ -7,8 +7,8 @@
   --line: #c7bca5;
   --line-strong: #8a7751;
   --accent: #9f2f1f;
-  --node: #2f3f53;
-  --node-focus: #a43a28;
+  --node: #1a2533;
+  --node-focus: #1f8c73;
 }
 
 * {
@@ -75,13 +75,13 @@ body {
 .graph-stage {
   position: relative;
   overflow: hidden;
-  border: 1px solid var(--line);
+  border: 1px solid #334257;
   border-radius: 14px;
   background:
-    linear-gradient(90deg, rgba(162, 143, 103, 0.12) 1px, transparent 1px),
-    linear-gradient(180deg, rgba(162, 143, 103, 0.09) 1px, transparent 1px),
-    var(--surface);
-  background-size: 24px 24px;
+    radial-gradient(circle at 18% 12%, rgba(49, 71, 94, 0.25) 0%, transparent 40%),
+    radial-gradient(circle at 82% 88%, rgba(31, 140, 115, 0.18) 0%, transparent 42%),
+    linear-gradient(180deg, #0f1824 0%, #111c2a 100%);
+  background-size: auto;
 }
 
 #graphSvg {
@@ -97,15 +97,7 @@ body {
 }
 
 .generation-overlay {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 52px;
-  pointer-events: none;
-  background: rgba(255, 252, 245, 0.92);
-  border-bottom: 1px solid rgba(138, 119, 81, 0.35);
-  backdrop-filter: blur(2px);
+  display: none;
 }
 
 .generation-label {
@@ -133,18 +125,18 @@ body {
 }
 
 .column-guide {
-  stroke: rgba(138, 119, 81, 0.3);
+  stroke: rgba(99, 176, 152, 0.34);
   stroke-width: 1;
   vector-effect: non-scaling-stroke;
 }
 
 #arrowHead path {
-  fill: rgba(93, 59, 19, 0.85);
+  fill: rgba(123, 233, 196, 0.9);
 }
 
 .graph-edge {
   fill: none;
-  stroke: rgba(93, 59, 19, 0.78);
+  stroke: rgba(123, 233, 196, 0.9);
   stroke-width: 2.2;
   marker-end: url(#arrowHead);
   vector-effect: non-scaling-stroke;
@@ -162,13 +154,13 @@ body {
 
 .graph-node rect {
   fill: var(--node);
-  stroke: rgba(255, 249, 237, 0.2);
-  stroke-width: 1;
-  filter: drop-shadow(0 4px 6px rgba(22, 28, 37, 0.25));
+  stroke: rgba(137, 231, 201, 0.55);
+  stroke-width: 1.2;
+  filter: drop-shadow(0 6px 14px rgba(10, 16, 24, 0.62));
 }
 
 .graph-node text {
-  fill: #fffaf0;
+  fill: #f6fffb;
   text-anchor: middle;
   user-select: none;
   pointer-events: none;
@@ -186,8 +178,8 @@ body {
 
 .graph-node.focused rect {
   fill: var(--node-focus);
-  stroke: #e0af65;
-  stroke-width: 2;
+  stroke: #d5ffee;
+  stroke-width: 2.2;
 }
 
 .graph-node.inactive {
@@ -358,3 +350,4 @@ body {
     padding: 12px;
   }
 }
+

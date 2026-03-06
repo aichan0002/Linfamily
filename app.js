@@ -26,7 +26,7 @@
     return;
   }
 
-  const HEADER_HEIGHT = 52;
+  const HEADER_HEIGHT = 0;
   const COL_GAP = 250;
   const ROW_GAP = 90;
   const MIN_SCALE = 0.08;
@@ -437,6 +437,7 @@
   };
 
   let focusedId = null;
+  let viewportAnimFrame = null;
 
   function clampScale(scale) {
     return Math.max(MIN_SCALE, Math.min(MAX_SCALE, scale));
@@ -519,6 +520,38 @@
     updateFocusClasses();
   }
 
+  function animateViewportTo(targetX, targetY, targetScale, duration = 260) {
+    if (viewportAnimFrame) {
+      cancelAnimationFrame(viewportAnimFrame);
+      viewportAnimFrame = null;
+    }
+
+    const startX = viewport.x;
+    const startY = viewport.y;
+    const startScale = viewport.scale;
+    const endScale = clampScale(targetScale);
+    const startTime = performance.now();
+
+    function step(now) {
+      const elapsed = now - startTime;
+      const t = Math.min(1, elapsed / duration);
+      const eased = 1 - Math.pow(1 - t, 3);
+
+      viewport.x = startX + (targetX - startX) * eased;
+      viewport.y = startY + (targetY - startY) * eased;
+      viewport.scale = startScale + (endScale - startScale) * eased;
+      render();
+
+      if (t < 1) {
+        viewportAnimFrame = requestAnimationFrame(step);
+      } else {
+        viewportAnimFrame = null;
+      }
+    }
+
+    viewportAnimFrame = requestAnimationFrame(step);
+  }
+
   function fitView() {
     const bounds = getGraphBounds();
     const stageWidth = stage.clientWidth;
@@ -545,18 +578,20 @@
     render();
   }
 
-  function focusNodeById(nodeId, recenter = false) {
+  function focusNodeById(nodeId, options = {}) {
+    const { recenter = false, zoomOnCenter = false } = options;
     const node = nodeMap.get(nodeId);
     if (!node) return;
 
     focusedId = nodeId;
 
     if (recenter) {
-      const targetScale = Math.max(viewport.scale, 0.62);
-      const focusCenterY = HEADER_HEIGHT + (stage.clientHeight - HEADER_HEIGHT) / 2;
-      viewport.scale = targetScale;
-      viewport.x = stage.clientWidth / 2 - node.x * targetScale;
-      viewport.y = focusCenterY - node.y * targetScale;
+      const targetScale = zoomOnCenter ? Math.max(viewport.scale, 0.62) : viewport.scale;
+      const targetX = stage.clientWidth / 2 - node.x * targetScale;
+      const targetY = stage.clientHeight / 2 - node.y * targetScale;
+      updateFocusInfo();
+      animateViewportTo(targetX, targetY, targetScale);
+      return;
     }
 
     updateFocusInfo();
@@ -644,7 +679,7 @@
       item.appendChild(info);
 
       item.addEventListener("click", () => {
-        focusNodeById(node.id, true);
+        focusNodeById(node.id, { recenter: true, zoomOnCenter: true });
       });
 
       searchResults.appendChild(item);
@@ -770,7 +805,7 @@
       pointerStart && Math.hypot(event.clientX - pointerStart.x, event.clientY - pointerStart.y) > 6;
 
     if (!moved && pressedNodeId) {
-      focusNodeById(pressedNodeId, false);
+      focusNodeById(pressedNodeId, { recenter: true, zoomOnCenter: false });
     } else if (!moved && pressedBlank) {
       focusedId = null;
       updateFocusInfo();
@@ -835,3 +870,5 @@
   fitView();
   renderSearchResults("");
 })();
+
+
