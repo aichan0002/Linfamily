@@ -11,6 +11,15 @@
   const zoomInBtn = document.getElementById("zoomInBtn");
   const searchInput = document.getElementById("searchInput");
   const searchResults = document.getElementById("searchResults");
+  const versionBadge = document.getElementById("versionBadge");
+
+  const APP_VERSION = "v2026.03.06-04";
+
+  if (versionBadge) {
+    versionBadge.textContent = `版本 ${APP_VERSION}`;
+  }
+  document.title = `林氏忠孝堂族譜 ${APP_VERSION}`;
+  console.info(`[Linfamily] ${APP_VERSION}`);
 
   if (!stage || !svg || !worldLayer || !edgeLayer || !nodeLayer) {
     return;
@@ -896,3 +905,4 @@
   fitView();
   renderSearchResults("");
 })();
+
