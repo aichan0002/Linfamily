@@ -13,7 +13,7 @@
   const searchResults = document.getElementById("searchResults");
   const versionBadge = document.getElementById("versionBadge");
 
-  const APP_VERSION = "v2026.03.06-05";
+  const APP_VERSION = "v2026.03.06-06";
 
   if (versionBadge) {
     versionBadge.textContent = `版本 ${APP_VERSION}`;
@@ -164,6 +164,16 @@
 
   const nodes = [...nodeMap.values()];
   const edges = [...edgeMap.values()];
+  const neighborMap = new Map(nodes.map((node) => [node.id, new Set()]));
+
+  for (const edge of edges) {
+    if (neighborMap.has(edge.source)) {
+      neighborMap.get(edge.source).add(edge.target);
+    }
+    if (neighborMap.has(edge.target)) {
+      neighborMap.get(edge.target).add(edge.source);
+    }
+  }
 
   for (const node of nodes) {
     const filteredNotes = [...node.notes]
@@ -369,6 +379,7 @@
 
   let focusedId = null;
   let viewportAnimFrame = null;
+  let layoutAnimFrame = null;
   let edgeGeometryDirty = true;
 
   const viewport = {
@@ -379,6 +390,169 @@
 
   function clampScale(scale) {
     return Math.max(MIN_SCALE, Math.min(MAX_SCALE, scale));
+  }
+
+  function cancelAllAnimations() {
+    if (viewportAnimFrame) {
+      cancelAnimationFrame(viewportAnimFrame);
+      viewportAnimFrame = null;
+    }
+    if (layoutAnimFrame) {
+      cancelAnimationFrame(layoutAnimFrame);
+      layoutAnimFrame = null;
+    }
+  }
+
+  function fitScaleForBounds(bounds) {
+    const stageWidth = stage.clientWidth;
+    const stageHeight = stage.clientHeight;
+    const drawableWidth = Math.max(40, stageWidth - 70);
+    const drawableHeight = Math.max(40, stageHeight - 30);
+    const scaleX = drawableWidth / Math.max(1, bounds.w);
+    const scaleY = drawableHeight / Math.max(1, bounds.h);
+    return clampScale(Math.min(scaleX, scaleY));
+  }
+
+  function getBoundsForTargets(targets) {
+    let minX = Number.POSITIVE_INFINITY;
+    let maxX = Number.NEGATIVE_INFINITY;
+    let minY = Number.POSITIVE_INFINITY;
+    let maxY = Number.NEGATIVE_INFINITY;
+
+    for (const node of nodes) {
+      const target = targets.get(node.id) || { x: node.x, y: node.y };
+      minX = Math.min(minX, target.x - node.r - 10);
+      maxX = Math.max(maxX, target.x + node.r + 10);
+      minY = Math.min(minY, target.y - node.r - 10);
+      maxY = Math.max(maxY, target.y + node.r + (node.note ? 18 : 0) + 10);
+    }
+
+    if (!Number.isFinite(minX)) {
+      return { minX: -120, maxX: 120, minY: -120, maxY: 120, w: 240, h: 240 };
+    }
+
+    minX -= 90;
+    maxX += 90;
+    minY -= 90;
+    maxY += 90;
+
+    return {
+      minX,
+      maxX,
+      minY,
+      maxY,
+      w: maxX - minX,
+      h: maxY - minY,
+    };
+  }
+
+  function buildOrderedTargetsFrom(centerId) {
+    const centerNode = nodeMap.get(centerId);
+    if (!centerNode) return null;
+
+    const distMap = new Map([[centerId, 0]]);
+    const queue = [centerId];
+
+    while (queue.length > 0) {
+      const currentId = queue.shift();
+      const currentDist = distMap.get(currentId) || 0;
+      const neighbors = neighborMap.get(currentId);
+      if (!neighbors) continue;
+
+      for (const nextId of neighbors) {
+        if (distMap.has(nextId)) continue;
+        distMap.set(nextId, currentDist + 1);
+        queue.push(nextId);
+      }
+    }
+
+    let maxDist = 0;
+    for (const dist of distMap.values()) {
+      if (dist > maxDist) maxDist = dist;
+    }
+
+    const detachedLevel = maxDist + 1;
+    const groups = new Map();
+
+    for (const node of nodes) {
+      const level = distMap.has(node.id) ? distMap.get(node.id) : detachedLevel;
+      if (!groups.has(level)) groups.set(level, []);
+      groups.get(level).push(node);
+    }
+
+    const targets = new Map();
+    targets.set(centerId, { x: 0, y: 0 });
+
+    const ringGap = Math.max(150, 96 + Math.sqrt(nodes.length) * 8.5);
+    const seedBase = hashText(centerId);
+    const levels = [...groups.keys()].sort((a, b) => a - b);
+
+    for (const level of levels) {
+      if (level === 0) continue;
+
+      const bucket = groups
+        .get(level)
+        .slice()
+        .sort(
+          (a, b) =>
+            a.col - b.col ||
+            a.order - b.order ||
+            a.label.localeCompare(b.label, "zh-Hant"),
+        );
+
+      const count = bucket.length;
+      if (count === 0) continue;
+
+      const radius = level === detachedLevel ? ringGap * (maxDist + 1.45) : ringGap * level;
+      const startAngle = (((seedBase + level * 89) % 360) / 180) * Math.PI;
+
+      for (let i = 0; i < count; i += 1) {
+        const angle = startAngle + (i / count) * Math.PI * 2;
+        const node = bucket[i];
+        targets.set(node.id, {
+          x: Math.cos(angle) * radius,
+          y: Math.sin(angle) * radius,
+        });
+      }
+    }
+
+    return { targets, centerId };
+  }
+
+  function animateLayoutTo(targets, duration = 440) {
+    if (layoutAnimFrame) {
+      cancelAnimationFrame(layoutAnimFrame);
+      layoutAnimFrame = null;
+    }
+
+    const starts = new Map(nodes.map((node) => [node.id, { x: node.x, y: node.y }]));
+    const startTime = performance.now();
+
+    function step(now) {
+      const elapsed = now - startTime;
+      const t = Math.min(1, elapsed / duration);
+      const eased = 1 - Math.pow(1 - t, 3);
+
+      for (const node of nodes) {
+        const start = starts.get(node.id);
+        const target = targets.get(node.id) || start;
+        node.x = start.x + (target.x - start.x) * eased;
+        node.y = start.y + (target.y - start.y) * eased;
+        node.vx = 0;
+        node.vy = 0;
+      }
+
+      edgeGeometryDirty = true;
+      render();
+
+      if (t < 1) {
+        layoutAnimFrame = requestAnimationFrame(step);
+      } else {
+        layoutAnimFrame = null;
+      }
+    }
+
+    layoutAnimFrame = requestAnimationFrame(step);
   }
 
   function getPrimaryParentLabel(node) {
@@ -587,13 +761,8 @@
     const bounds = getGraphBounds();
     const stageWidth = stage.clientWidth;
     const stageHeight = stage.clientHeight;
-    const drawableWidth = Math.max(40, stageWidth - 70);
-    const drawableHeight = Math.max(40, stageHeight - 30);
 
-    const scaleX = drawableWidth / bounds.w;
-    const scaleY = drawableHeight / bounds.h;
-
-    viewport.scale = clampScale(Math.min(scaleX, scaleY));
+    viewport.scale = fitScaleForBounds(bounds);
 
     const worldCenterX = (bounds.minX + bounds.maxX) / 2;
     const worldCenterY = (bounds.minY + bounds.maxY) / 2;
@@ -607,18 +776,33 @@
   }
 
   function focusNodeById(nodeId, options = {}) {
-    const { recenter = false, zoomOnCenter = false } = options;
+    const { recenter = false, zoomOnCenter = false, relayoutOnFocus = true } = options;
     const node = nodeMap.get(nodeId);
     if (!node) return;
 
     focusedId = nodeId;
 
     if (recenter) {
-      const targetScale = zoomOnCenter ? Math.max(viewport.scale, 0.72) : viewport.scale;
-      const targetX = stage.clientWidth / 2 - node.x * targetScale;
-      const targetY = stage.clientHeight / 2 - node.y * targetScale;
+      let focusTarget = { x: node.x, y: node.y };
+      let targetScale = zoomOnCenter ? Math.max(viewport.scale, 0.72) : viewport.scale;
+
+      if (relayoutOnFocus) {
+        const layout = buildOrderedTargetsFrom(nodeId);
+        if (layout) {
+          const bounds = getBoundsForTargets(layout.targets);
+          const fitScale = fitScaleForBounds(bounds);
+          targetScale = zoomOnCenter
+            ? Math.max(fitScale, Math.min(1.02, viewport.scale))
+            : fitScale;
+          focusTarget = layout.targets.get(nodeId) || focusTarget;
+          animateLayoutTo(layout.targets, 460);
+        }
+      }
+
+      const targetX = stage.clientWidth / 2 - focusTarget.x * targetScale;
+      const targetY = stage.clientHeight / 2 - focusTarget.y * targetScale;
       updateFocusInfo();
-      animateViewportTo(targetX, targetY, targetScale);
+      animateViewportTo(targetX, targetY, targetScale, 460);
       return;
     }
 
@@ -761,6 +945,7 @@
   }
 
   svg.addEventListener("pointerdown", (event) => {
+    cancelAllAnimations();
     activePointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
     svg.setPointerCapture(event.pointerId);
 
@@ -941,3 +1126,4 @@
   fitView();
   renderSearchResults("");
 })();
+
