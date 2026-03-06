@@ -422,6 +422,15 @@ function drawColumnHeaderOverlay(width) {
   }
 }
 
+function getEdgeLaneX(sourceCol, targetCol) {
+  if (sourceCol === targetCol) {
+    return sourceCol * colGap;
+  }
+  const minCol = Math.min(sourceCol, targetCol);
+  const maxCol = Math.max(sourceCol, targetCol);
+  return ((minCol + maxCol) * colGap) / 2;
+}
+
 function draw() {
   const w = canvas.clientWidth;
   const h = canvas.clientHeight;
@@ -453,13 +462,17 @@ function draw() {
     const fromY = s.y;
     const toX = t.x - t.w / 2;
     const toY = t.y;
-    const midX = (fromX + toX) / 2;
+    const laneX = getEdgeLaneX(s.col, t.col);
 
     ctx.beginPath();
     ctx.moveTo(fromX, fromY);
-    ctx.lineTo(midX, fromY);
-    ctx.lineTo(midX, toY);
-    ctx.lineTo(toX, toY);
+    if (Math.abs(fromX - laneX) > 0.4) {
+      ctx.lineTo(laneX, fromY);
+    }
+    ctx.lineTo(laneX, toY);
+    if (Math.abs(toX - laneX) > 0.4) {
+      ctx.lineTo(toX, toY);
+    }
     ctx.lineWidth = active ? 2.2 : 1;
     ctx.strokeStyle = active ? "rgba(93, 59, 19, 0.82)" : "rgba(93, 59, 19, 0.2)";
     ctx.stroke();
