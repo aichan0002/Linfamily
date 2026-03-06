@@ -1,802 +1,837 @@
-const canvas = document.getElementById("graphCanvas");
-const ctx = canvas.getContext("2d");
-const focusInfo = document.getElementById("focusInfo");
-const resetBtn = document.getElementById("resetBtn");
-const zoomOutBtn = document.getElementById("zoomOutBtn");
-const zoomInBtn = document.getElementById("zoomInBtn");
-const searchInput = document.getElementById("searchInput");
-const searchResults = document.getElementById("searchResults");
+﻿(() => {
+  const stage = document.getElementById("graphStage");
+  const svg = document.getElementById("graphSvg");
+  const worldLayer = document.getElementById("worldLayer");
+  const columnLayer = document.getElementById("columnLayer");
+  const edgeLayer = document.getElementById("edgeLayer");
+  const nodeLayer = document.getElementById("nodeLayer");
+  const generationOverlay = document.getElementById("generationOverlay");
 
-const columns = Array.isArray(window.FAMILY_COLUMNS)
-  ? window.FAMILY_COLUMNS.map((c) => ({
-      generation: (c?.generation || "").toString().trim(),
-      marker: (c?.marker || "").toString().trim(),
-    }))
-  : [];
+  const focusInfo = document.getElementById("focusInfo");
+  const resetBtn = document.getElementById("resetBtn");
+  const zoomOutBtn = document.getElementById("zoomOutBtn");
+  const zoomInBtn = document.getElementById("zoomInBtn");
+  const searchInput = document.getElementById("searchInput");
+  const searchResults = document.getElementById("searchResults");
 
-const rawRows = Array.isArray(window.FAMILY_ROWS) ? window.FAMILY_ROWS : [];
-
-function cleanCell(value) {
-  if (value === null || value === undefined) return null;
-  const t = String(value).trim();
-  return t ? t : null;
-}
-
-const tableRows = rawRows
-  .map((row) => {
-    const cells = Array.isArray(row) ? row : [];
-    return columns.map((_, i) => cleanCell(cells[i]));
-  })
-  .filter((row) => row.some((v) => v));
-
-function detectRootName(rows) {
-  const counts = new Map();
-  for (const row of rows) {
-    const v = row[0];
-    if (!v) continue;
-    counts.set(v, (counts.get(v) || 0) + 1);
+  if (
+    !stage ||
+    !svg ||
+    !worldLayer ||
+    !columnLayer ||
+    !edgeLayer ||
+    !nodeLayer ||
+    !generationOverlay
+  ) {
+    return;
   }
-  let root = null;
-  let max = -1;
-  for (const [name, count] of counts.entries()) {
-    if (count > max) {
-      max = count;
-      root = name;
-    }
+
+  const HEADER_HEIGHT = 52;
+  const COL_GAP = 250;
+  const ROW_GAP = 90;
+  const MIN_SCALE = 0.08;
+  const MAX_SCALE = 2.4;
+
+  const columns = Array.isArray(window.FAMILY_COLUMNS)
+    ? window.FAMILY_COLUMNS.map((column) => ({
+        generation: String(column?.generation || "").trim(),
+        marker: String(column?.marker || "").trim(),
+      }))
+    : [];
+
+  const rawRows = Array.isArray(window.FAMILY_ROWS) ? window.FAMILY_ROWS : [];
+
+  function cleanCell(value) {
+    if (value === null || value === undefined) return null;
+    const text = String(value).trim();
+    return text.length > 0 ? text : null;
   }
-  return root;
-}
 
-const rootName = detectRootName(tableRows);
+  const tableRows = rawRows
+    .map((row) => {
+      const cells = Array.isArray(row) ? row : [];
+      return columns.map((_, index) => cleanCell(cells[index]));
+    })
+    .filter((row) => row.some((value) => Boolean(value)));
 
-const nodeMap = new Map();
-const edgeMap = new Map();
-let nodeOrder = 0;
-
-function getNode(id, col, label) {
-  if (!nodeMap.has(id)) {
-    nodeMap.set(id, {
-      id,
-      col,
-      label,
-      notes: new Set(),
-      note: "",
-      x: 0,
-      y: 0,
-      w: 92,
-      h: 40,
-      parents: [],
-      children: [],
-      order: nodeOrder,
-    });
-    nodeOrder += 1;
-  }
-  return nodeMap.get(id);
-}
-
-function link(parentId, childId) {
-  const edgeKey = `${parentId}->${childId}`;
-  if (edgeMap.has(edgeKey)) return;
-  edgeMap.set(edgeKey, { source: parentId, target: childId });
-  const p = nodeMap.get(parentId);
-  const c = nodeMap.get(childId);
-  if (!p.children.includes(childId)) p.children.push(childId);
-  if (!c.parents.includes(parentId)) c.parents.push(parentId);
-}
-
-const lastPathNodeByCol = Array.from({ length: columns.length }, () => null);
-
-
-for (const row of tableRows) {
-  const pathValues = rootName && row[0] === rootName ? [...row] : null;
-
-  if (pathValues) {
-    for (let i = 0; i < lastPathNodeByCol.length; i += 1) {
-      lastPathNodeByCol[i] = null;
+  function detectRootName(rows) {
+    const counts = new Map();
+    for (const row of rows) {
+      const firstCell = row[0];
+      if (!firstCell) continue;
+      counts.set(firstCell, (counts.get(firstCell) || 0) + 1);
     }
 
-    let prevNodeId = null;
-    const prefix = [];
-
-    for (let col = 0; col < columns.length; col += 1) {
-      const label = pathValues[col];
-      if (!label) continue;
-
-      prefix.push(label);
-      const id = `${col}:${prefix.join(">")}`;
-      getNode(id, col, label);
-      lastPathNodeByCol[col] = id;
-
-      if (prevNodeId) {
-        link(prevNodeId, id);
+    let selectedRoot = null;
+    let maxCount = -1;
+    for (const [name, count] of counts.entries()) {
+      if (count > maxCount) {
+        selectedRoot = name;
+        maxCount = count;
       }
-      prevNodeId = id;
     }
-  } else {
-    for (let col = 0; col < columns.length; col += 1) {
-      const note = row[col];
-      const nodeId = lastPathNodeByCol[col];
-      if (!note || !nodeId) continue;
-      nodeMap.get(nodeId).notes.add(note);
+
+    return selectedRoot;
+  }
+
+  const rootName = detectRootName(tableRows);
+
+  const nodeMap = new Map();
+  const edgeMap = new Map();
+  let nodeOrder = 0;
+
+  function getNode(nodeId, col, label) {
+    if (!nodeMap.has(nodeId)) {
+      nodeMap.set(nodeId, {
+        id: nodeId,
+        col,
+        label,
+        notes: new Set(),
+        note: "",
+        x: 0,
+        y: null,
+        w: 100,
+        h: 44,
+        order: nodeOrder,
+        parents: [],
+        children: [],
+      });
+      nodeOrder += 1;
+    }
+
+    return nodeMap.get(nodeId);
+  }
+
+  function link(parentId, childId) {
+    if (!parentId || !childId || parentId === childId) return;
+    const edgeKey = `${parentId}->${childId}`;
+    if (edgeMap.has(edgeKey)) return;
+
+    edgeMap.set(edgeKey, { source: parentId, target: childId });
+
+    const parentNode = nodeMap.get(parentId);
+    const childNode = nodeMap.get(childId);
+
+    if (parentNode && !parentNode.children.includes(childId)) {
+      parentNode.children.push(childId);
+    }
+    if (childNode && !childNode.parents.includes(parentId)) {
+      childNode.parents.push(parentId);
     }
   }
-}
 
-const nodes = [...nodeMap.values()];
-const edges = [...edgeMap.values()];
+  const lastPathNodeByCol = Array.from({ length: columns.length }, () => null);
 
-for (const node of nodes) {
-  const notes = [...node.notes].filter((v) => v && v !== node.label);
-  if (notes.length <= 2) {
-    node.note = notes.join("、");
-  } else {
-    node.note = `${notes[0]} 等${notes.length}人`;
+  for (const row of tableRows) {
+    const isPathRow = row[0] && (!rootName || row[0] === rootName);
+
+    if (isPathRow) {
+      for (let i = 0; i < lastPathNodeByCol.length; i += 1) {
+        lastPathNodeByCol[i] = null;
+      }
+
+      const prefix = [];
+      let previousNodeId = null;
+
+      for (let col = 0; col < columns.length; col += 1) {
+        const label = row[col];
+        if (!label) continue;
+
+        prefix.push(label);
+        const nodeId = `${col}:${prefix.join(">")}`;
+        getNode(nodeId, col, label);
+        lastPathNodeByCol[col] = nodeId;
+
+        if (previousNodeId) {
+          link(previousNodeId, nodeId);
+        }
+
+        previousNodeId = nodeId;
+      }
+    } else {
+      for (let col = 0; col < columns.length; col += 1) {
+        const note = row[col];
+        const nodeId = lastPathNodeByCol[col];
+        if (!note || !nodeId) continue;
+        nodeMap.get(nodeId)?.notes.add(note);
+      }
+    }
   }
-}
 
-const colGap = 210;
-const rowGap = 72;
-let leafIndex = 0;
+  const nodes = [...nodeMap.values()];
+  const edges = [...edgeMap.values()];
 
-function sortChildIds(aId, bId) {
-  const a = nodeMap.get(aId);
-  const b = nodeMap.get(bId);
-  if (a.col !== b.col) return a.col - b.col;
-  return a.order - b.order;
-}
+  for (const node of nodes) {
+    const filteredNotes = [...node.notes]
+      .map((note) => cleanCell(note))
+      .filter((note) => note && note !== "*" && note !== node.label);
 
-function placeFrom(nodeId, visiting = new Set()) {
-  const node = nodeMap.get(nodeId);
-  if (!node) return 0;
-  if (typeof node.y === "number" && node.y !== 0) return node.y;
-  if (visiting.has(nodeId)) return node.y;
+    if (filteredNotes.length === 0) {
+      node.note = "";
+    } else if (filteredNotes.length <= 2) {
+      node.note = filteredNotes.join("、");
+    } else {
+      node.note = `${filteredNotes[0]} 等${filteredNotes.length}位`;
+    }
+  }
 
-  visiting.add(nodeId);
-  node.x = node.col * colGap;
+  function sortChildIds(aId, bId) {
+    const a = nodeMap.get(aId);
+    const b = nodeMap.get(bId);
+    if (!a && !b) return 0;
+    if (!a) return 1;
+    if (!b) return -1;
+    if (a.col !== b.col) return a.col - b.col;
+    return a.order - b.order;
+  }
 
-  if (node.children.length === 0) {
-    node.y = leafIndex * rowGap;
-    leafIndex += 1;
+  let leafIndex = 0;
+
+  function placeFrom(nodeId, visiting = new Set()) {
+    const node = nodeMap.get(nodeId);
+    if (!node) return 0;
+    if (typeof node.y === "number") return node.y;
+    if (visiting.has(nodeId)) return 0;
+
+    visiting.add(nodeId);
+
+    if (node.children.length === 0) {
+      node.y = leafIndex * ROW_GAP;
+      leafIndex += 1;
+      visiting.delete(nodeId);
+      return node.y;
+    }
+
+    const childYs = node.children
+      .slice()
+      .sort(sortChildIds)
+      .map((childId) => placeFrom(childId, visiting));
+
+    node.y = (Math.min(...childYs) + Math.max(...childYs)) / 2;
     visiting.delete(nodeId);
     return node.y;
   }
 
-  const ys = node.children.sort(sortChildIds).map((childId) => placeFrom(childId, visiting));
-  node.y = (Math.min(...ys) + Math.max(...ys)) / 2;
-  visiting.delete(nodeId);
-  return node.y;
-}
+  const roots = nodes
+    .filter((node) => node.parents.length === 0)
+    .sort((a, b) => a.order - b.order);
 
-const roots = nodes.filter((node) => node.parents.length === 0).sort((a, b) => a.order - b.order);
-for (const root of roots) {
-  placeFrom(root.id);
-}
-
-if (nodes.length > 0) {
-  const nodeYs = nodes.map((n) => n.y);
-  const yMid = (Math.min(...nodeYs) + Math.max(...nodeYs)) / 2;
-  for (const node of nodes) {
-    node.y -= yMid;
+  for (const root of roots) {
+    placeFrom(root.id, new Set());
   }
-}
 
-function measureNodeSizes() {
-  ctx.font = "17px 'Noto Serif TC', 'Microsoft JhengHei', serif";
   for (const node of nodes) {
-    const baseWidth = Math.max(72, Math.ceil(ctx.measureText(node.label).width + 26));
+    if (typeof node.y !== "number") {
+      node.y = leafIndex * ROW_GAP;
+      leafIndex += 1;
+    }
+    node.x = node.col * COL_GAP;
+  }
+
+  if (nodes.length > 0) {
+    const ys = nodes.map((node) => node.y);
+    const middleY = (Math.min(...ys) + Math.max(...ys)) / 2;
+    for (const node of nodes) {
+      node.y -= middleY;
+    }
+  }
+
+  function estimateCharacterWidth(text) {
+    let total = 0;
+    for (const char of text) {
+      const code = char.codePointAt(0) || 0;
+      if (code <= 0x007f) total += 0.56;
+      else if (code <= 0x02ff) total += 0.65;
+      else total += 1.0;
+    }
+    return total;
+  }
+
+  function estimateTextWidth(text, fontSize) {
+    return Math.ceil(estimateCharacterWidth(text) * fontSize);
+  }
+
+  for (const node of nodes) {
+    const nameWidth = estimateTextWidth(node.label, 16) + 34;
+    const noteWidth = node.note ? estimateTextWidth(node.note, 11) + 26 : 0;
+    node.w = Math.max(94, Math.min(220, Math.max(nameWidth, noteWidth)));
+    node.h = node.note ? 64 : 44;
+  }
+
+  function createSvgElement(tagName, attrs = {}) {
+    const element = document.createElementNS("http://www.w3.org/2000/svg", tagName);
+    for (const [name, value] of Object.entries(attrs)) {
+      if (value === undefined || value === null) continue;
+      element.setAttribute(name, String(value));
+    }
+    return element;
+  }
+
+  function buildEdgePath(sourceNode, targetNode) {
+    const sx = sourceNode.x + sourceNode.w / 2;
+    const sy = sourceNode.y;
+    const tx = targetNode.x - targetNode.w / 2;
+    const ty = targetNode.y;
+
+    const curve = Math.max(56, Math.min(180, (tx - sx) * 0.45));
+    return `M ${sx} ${sy} C ${sx + curve} ${sy}, ${tx - curve} ${ty}, ${tx} ${ty}`;
+  }
+
+  const nodeElements = new Map();
+  const edgeElements = [];
+  const columnLineElements = [];
+  const generationLabels = [];
+
+  for (let col = 0; col < columns.length; col += 1) {
+    const line = createSvgElement("line", {
+      class: "column-guide",
+      x1: col * COL_GAP,
+      x2: col * COL_GAP,
+      y1: -100,
+      y2: 100,
+    });
+    columnLayer.appendChild(line);
+    columnLineElements.push(line);
+
+    const label = document.createElement("div");
+    label.className = "generation-label";
+
+    const generationSpan = document.createElement("span");
+    generationSpan.className = "generation-index";
+    generationSpan.textContent = columns[col].generation || `第${col}世`;
+    label.appendChild(generationSpan);
+
+    if (columns[col].marker) {
+      const markerSpan = document.createElement("span");
+      markerSpan.className = "generation-marker";
+      markerSpan.textContent = columns[col].marker;
+      label.appendChild(markerSpan);
+    }
+
+    generationOverlay.appendChild(label);
+    generationLabels.push(label);
+  }
+
+  for (const edge of edges) {
+    const sourceNode = nodeMap.get(edge.source);
+    const targetNode = nodeMap.get(edge.target);
+    if (!sourceNode || !targetNode) continue;
+
+    const path = createSvgElement("path", {
+      class: "graph-edge",
+      d: buildEdgePath(sourceNode, targetNode),
+      "data-source": edge.source,
+      "data-target": edge.target,
+    });
+
+    edgeLayer.appendChild(path);
+    edgeElements.push(path);
+  }
+
+  for (const node of nodes) {
+    const group = createSvgElement("g", {
+      class: "graph-node",
+      "data-id": node.id,
+      transform: `translate(${node.x} ${node.y})`,
+    });
+
+    const rect = createSvgElement("rect", {
+      x: -node.w / 2,
+      y: -node.h / 2,
+      width: node.w,
+      height: node.h,
+      rx: 12,
+      ry: 12,
+    });
+
+    const nameText = createSvgElement("text", {
+      class: "name",
+      x: 0,
+      y: node.note ? -8 : 5,
+    });
+    nameText.textContent = node.label;
+
+    group.appendChild(rect);
+    group.appendChild(nameText);
+
     if (node.note) {
-      ctx.font = "12px 'Noto Serif TC', 'Microsoft JhengHei', serif";
-      const noteWidth = Math.ceil(ctx.measureText(node.note).width + 20);
-      node.w = Math.max(baseWidth, noteWidth);
-      node.h = 56;
-      ctx.font = "17px 'Noto Serif TC', 'Microsoft JhengHei', serif";
-    } else {
-      node.w = baseWidth;
-      node.h = 40;
+      const noteText = createSvgElement("text", {
+        class: "note",
+        x: 0,
+        y: 15,
+      });
+      noteText.textContent = node.note;
+      group.appendChild(noteText);
     }
-  }
-}
 
-const viewport = { x: 0, y: 0, scale: 1 };
-const minScale = 0.08;
-const maxScale = 2.5;
-const headerOverlayHeight = 42;
-let pressedNodeId = null;
-let pressedBlank = false;
-let isPanning = false;
-let panAnchor = null;
-let pointerStart = null;
-let focusedId = null;
-const activePointers = new Map();
-let pinchState = null;
-
-function generationLabel(colIndex) {
-  const column = columns[colIndex];
-  if (!column) return "";
-  return `${column.generation}${column.marker ? ` ${column.marker}` : ""}`.trim();
-}
-
-function getParentLabel(node) {
-  if (!node.parents.length) return "";
-  const parent = nodeMap.get(node.parents[0]);
-  return parent ? parent.label : "";
-}
-
-function getBounds() {
-  if (nodes.length === 0) {
-    return { minX: -100, maxX: 100, minY: -100, maxY: 100, w: 200, h: 200 };
-  }
-  const minX = Math.min(...nodes.map((n) => n.x - n.w / 2)) - 80;
-  const maxX = Math.max(...nodes.map((n) => n.x + n.w / 2)) + 80;
-  const minY = Math.min(...nodes.map((n) => n.y - n.h / 2)) - 130;
-  const maxY = Math.max(...nodes.map((n) => n.y + n.h / 2)) + 80;
-  return { minX, maxX, minY, maxY, w: maxX - minX, h: maxY - minY };
-}
-
-function resizeCanvas() {
-  const ratio = window.devicePixelRatio || 1;
-  const rect = canvas.getBoundingClientRect();
-  canvas.width = Math.floor(rect.width * ratio);
-  canvas.height = Math.floor(rect.height * ratio);
-  ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
-}
-
-function toWorld(clientX, clientY) {
-  const rect = canvas.getBoundingClientRect();
-  const x = clientX - rect.left;
-  const y = clientY - rect.top;
-  return {
-    x: (x - viewport.x) / viewport.scale,
-    y: (y - viewport.y) / viewport.scale,
-  };
-}
-
-function clampScale(value) {
-  return Math.max(minScale, Math.min(maxScale, value));
-}
-
-function zoomAtClientPoint(clientX, clientY, targetScale) {
-  const rect = canvas.getBoundingClientRect();
-  const world = toWorld(clientX, clientY);
-  const nextScale = clampScale(targetScale);
-  viewport.scale = nextScale;
-  viewport.x = clientX - rect.left - world.x * nextScale;
-  viewport.y = clientY - rect.top - world.y * nextScale;
-  draw();
-}
-
-function zoomAtCenter(factor) {
-  const rect = canvas.getBoundingClientRect();
-  const cx = rect.left + rect.width / 2;
-  const cy = rect.top + rect.height / 2;
-  zoomAtClientPoint(cx, cy, viewport.scale * factor);
-}
-
-function roundedRect(x, y, w, h, r) {
-  const rr = Math.min(r, w / 2, h / 2);
-  ctx.beginPath();
-  ctx.moveTo(x + rr, y);
-  ctx.arcTo(x + w, y, x + w, y + h, rr);
-  ctx.arcTo(x + w, y + h, x, y + h, rr);
-  ctx.arcTo(x, y + h, x, y, rr);
-  ctx.arcTo(x, y, x + w, y, rr);
-  ctx.closePath();
-}
-
-function findNodeAt(clientX, clientY) {
-  const p = toWorld(clientX, clientY);
-  for (let i = nodes.length - 1; i >= 0; i -= 1) {
-    const n = nodes[i];
-    if (
-      p.x >= n.x - n.w / 2 &&
-      p.x <= n.x + n.w / 2 &&
-      p.y >= n.y - n.h / 2 &&
-      p.y <= n.y + n.h / 2
-    ) {
-      return n;
-    }
-  }
-  return null;
-}
-
-function computeFocusSet(nodeId) {
-  const lineage = new Set([nodeId]);
-
-  const parentStack = [nodeId];
-  while (parentStack.length > 0) {
-    const currentId = parentStack.pop();
-    const current = nodeMap.get(currentId);
-    for (const parentId of current.parents) {
-      if (lineage.has(parentId)) continue;
-      lineage.add(parentId);
-      parentStack.push(parentId);
-    }
+    nodeLayer.appendChild(group);
+    nodeElements.set(node.id, group);
   }
 
-  const childStack = [nodeId];
-  while (childStack.length > 0) {
-    const currentId = childStack.pop();
-    const current = nodeMap.get(currentId);
-    for (const childId of current.children) {
-      if (lineage.has(childId)) continue;
-      lineage.add(childId);
-      childStack.push(childId);
-    }
+  function getPrimaryParentLabel(node) {
+    if (!node.parents.length) return "";
+    const parent = nodeMap.get(node.parents[0]);
+    return parent ? parent.label : "";
   }
 
-  return lineage;
-}
-
-function drawGenerationHeader(column, screenX, y) {
-  const generation = column.generation;
-  const marker = column.marker;
-
-  if (!marker) {
-    ctx.textAlign = "center";
-    ctx.font = "600 16px 'Noto Serif TC', 'Microsoft JhengHei', serif";
-    ctx.fillStyle = "#6b5b3d";
-    ctx.fillText(generation, screenX, y);
-    return;
+  function generationLabel(colIndex) {
+    const column = columns[colIndex];
+    if (!column) return "";
+    return `${column.generation}${column.marker ? ` ${column.marker}` : ""}`.trim();
   }
 
-  ctx.textAlign = "left";
-  ctx.font = "500 15px 'Noto Serif TC', 'Microsoft JhengHei', serif";
-  const generationWidth = ctx.measureText(generation).width;
+  function computeFocusSet(nodeId) {
+    const lineage = new Set([nodeId]);
 
-  ctx.font = "700 17px 'Noto Serif TC', 'Microsoft JhengHei', serif";
-  const markerWidth = ctx.measureText(marker).width;
-
-  const gap = 6;
-  const totalWidth = generationWidth + gap + markerWidth;
-  const startX = screenX - totalWidth / 2;
-
-  ctx.font = "500 15px 'Noto Serif TC', 'Microsoft JhengHei', serif";
-  ctx.fillStyle = "#6b5b3d";
-  ctx.fillText(generation, startX, y);
-
-  ctx.font = "700 17px 'Noto Serif TC', 'Microsoft JhengHei', serif";
-  ctx.fillStyle = "#9f2f1f";
-  ctx.fillText(marker, startX + generationWidth + gap, y);
-}
-
-function drawColumnHeaderOverlay(width) {
-  ctx.fillStyle = "rgba(255, 252, 245, 0.95)";
-  ctx.fillRect(0, 0, width, headerOverlayHeight);
-
-  ctx.strokeStyle = "rgba(138, 119, 81, 0.35)";
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(0, headerOverlayHeight - 0.5);
-  ctx.lineTo(width, headerOverlayHeight - 0.5);
-  ctx.stroke();
-
-  ctx.textBaseline = "middle";
-
-  for (let i = 0; i < columns.length; i += 1) {
-    const worldX = i * colGap;
-    const screenX = worldX * viewport.scale + viewport.x;
-    if (screenX < -120 || screenX > width + 120) continue;
-    drawGenerationHeader(columns[i], screenX, headerOverlayHeight / 2);
-  }
-}
-
-function getEdgeLaneX(sourceCol, targetCol) {
-  if (sourceCol === targetCol) {
-    return sourceCol * colGap;
-  }
-  const minCol = Math.min(sourceCol, targetCol);
-  const maxCol = Math.max(sourceCol, targetCol);
-  return ((minCol + maxCol) * colGap) / 2;
-}
-
-function addAxisInterval(buckets, axisValue, from, to, active) {
-  const start = Math.min(from, to);
-  const end = Math.max(from, to);
-  if (end - start <= 0.01) return;
-
-  const key = axisValue.toFixed(3);
-  if (!buckets.has(key)) {
-    buckets.set(key, { axisValue, intervals: [] });
-  }
-  buckets.get(key).intervals.push({ start, end, active });
-}
-
-function mergeIntervalsWithPriority(intervals) {
-  if (intervals.length === 0) return [];
-
-  const points = new Set();
-  for (const interval of intervals) {
-    points.add(interval.start);
-    points.add(interval.end);
-  }
-
-  const sorted = [...points].sort((a, b) => a - b);
-  const merged = [];
-
-  for (let i = 0; i < sorted.length - 1; i += 1) {
-    const segStart = sorted[i];
-    const segEnd = sorted[i + 1];
-    if (segEnd - segStart <= 0.01) continue;
-
-    let covered = false;
-    let hasActive = false;
-    for (const interval of intervals) {
-      if (interval.start < segEnd - 1e-6 && interval.end > segStart + 1e-6) {
-        covered = true;
-        if (interval.active) hasActive = true;
+    const upStack = [nodeId];
+    while (upStack.length > 0) {
+      const currentId = upStack.pop();
+      const currentNode = nodeMap.get(currentId);
+      if (!currentNode) continue;
+      for (const parentId of currentNode.parents) {
+        if (lineage.has(parentId)) continue;
+        lineage.add(parentId);
+        upStack.push(parentId);
       }
     }
 
-    if (!covered) continue;
-
-    const last = merged[merged.length - 1];
-    if (last && last.active === hasActive && Math.abs(last.end - segStart) <= 0.01) {
-      last.end = segEnd;
-    } else {
-      merged.push({ start: segStart, end: segEnd, active: hasActive });
-    }
-  }
-
-  return merged;
-}
-
-function buildEdgeSegments(focusSet) {
-  const verticalBuckets = new Map();
-  const horizontalBuckets = new Map();
-
-  for (const edge of edges) {
-    const s = nodeMap.get(edge.source);
-    const t = nodeMap.get(edge.target);
-    const active = !focusSet || (focusSet.has(s.id) && focusSet.has(t.id));
-    const fromX = s.x + s.w / 2;
-    const fromY = s.y;
-    const toX = t.x - t.w / 2;
-    const toY = t.y;
-    const laneX = getEdgeLaneX(s.col, t.col);
-
-    if (Math.abs(fromX - laneX) > 0.4) {
-      addAxisInterval(horizontalBuckets, fromY, fromX, laneX, active);
-    }
-    addAxisInterval(verticalBuckets, laneX, fromY, toY, active);
-    if (Math.abs(toX - laneX) > 0.4) {
-      addAxisInterval(horizontalBuckets, toY, laneX, toX, active);
-    }
-  }
-
-  const segments = [];
-
-  for (const bucket of verticalBuckets.values()) {
-    const merged = mergeIntervalsWithPriority(bucket.intervals);
-    for (const interval of merged) {
-      segments.push({
-        x1: bucket.axisValue,
-        y1: interval.start,
-        x2: bucket.axisValue,
-        y2: interval.end,
-        active: interval.active,
-      });
-    }
-  }
-
-  for (const bucket of horizontalBuckets.values()) {
-    const merged = mergeIntervalsWithPriority(bucket.intervals);
-    for (const interval of merged) {
-      segments.push({
-        x1: interval.start,
-        y1: bucket.axisValue,
-        x2: interval.end,
-        y2: bucket.axisValue,
-        active: interval.active,
-      });
-    }
-  }
-
-  return segments;
-}
-
-function draw() {
-  const w = canvas.clientWidth;
-  const h = canvas.clientHeight;
-  ctx.clearRect(0, 0, w, h);
-
-  ctx.save();
-  ctx.translate(viewport.x, viewport.y);
-  ctx.scale(viewport.scale, viewport.scale);
-
-  const lineStartY = (headerOverlayHeight - viewport.y) / viewport.scale;
-
-  for (let i = 0; i < columns.length; i += 1) {
-    const x = i * colGap;
-    ctx.strokeStyle = "rgba(138, 119, 81, 0.26)";
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(x, lineStartY);
-    ctx.lineTo(x, h / viewport.scale + 220);
-    ctx.stroke();
-  }
-
-  const focusSet = focusedId ? computeFocusSet(focusedId) : null;
-
-  const edgeSegments = buildEdgeSegments(focusSet);
-  for (const segment of edgeSegments) {
-    ctx.beginPath();
-    ctx.moveTo(segment.x1, segment.y1);
-    ctx.lineTo(segment.x2, segment.y2);
-    ctx.lineWidth = segment.active ? 2.2 : 1;
-    ctx.strokeStyle = segment.active ? "rgba(93, 59, 19, 0.82)" : "rgba(93, 59, 19, 0.2)";
-    ctx.stroke();
-  }
-
-  for (const node of nodes) {
-    const active = !focusSet || focusSet.has(node.id);
-    const isFocused = focusedId === node.id;
-    const alpha = active ? 1 : 0.25;
-
-    ctx.globalAlpha = alpha;
-    roundedRect(node.x - node.w / 2, node.y - node.h / 2, node.w, node.h, 11);
-    ctx.fillStyle = isFocused ? "#9f2f1f" : "#2f3f53";
-    ctx.fill();
-
-    if (isFocused) {
-      roundedRect(node.x - node.w / 2 - 4, node.y - node.h / 2 - 4, node.w + 8, node.h + 8, 14);
-      ctx.lineWidth = 2;
-      ctx.strokeStyle = "#dca85f";
-      ctx.stroke();
+    const downStack = [nodeId];
+    while (downStack.length > 0) {
+      const currentId = downStack.pop();
+      const currentNode = nodeMap.get(currentId);
+      if (!currentNode) continue;
+      for (const childId of currentNode.children) {
+        if (lineage.has(childId)) continue;
+        lineage.add(childId);
+        downStack.push(childId);
+      }
     }
 
-    ctx.fillStyle = "#fffaf0";
-    ctx.font = "600 17px 'Noto Serif TC', 'Microsoft JhengHei', serif";
-    ctx.textAlign = "center";
-    ctx.textBaseline = node.note ? "bottom" : "middle";
-    ctx.fillText(node.label, node.x, node.note ? node.y - 2 : node.y + 1);
+    return lineage;
+  }
 
-    if (node.note) {
-      ctx.font = "12px 'Noto Serif TC', 'Microsoft JhengHei', serif";
-      ctx.textBaseline = "top";
-      ctx.fillStyle = "rgba(255, 250, 240, 0.86)";
-      ctx.fillText(node.note, node.x, node.y + 3);
+  function getGraphBounds() {
+    if (nodes.length === 0) {
+      return { minX: -120, maxX: 120, minY: -120, maxY: 120, w: 240, h: 240 };
     }
-  }
 
-  ctx.globalAlpha = 1;
-  ctx.restore();
-  drawColumnHeaderOverlay(w);
-}
+    const minX = Math.min(...nodes.map((node) => node.x - node.w / 2)) - 120;
+    const maxX = Math.max(...nodes.map((node) => node.x + node.w / 2)) + 140;
+    const minY = Math.min(...nodes.map((node) => node.y - node.h / 2)) - 120;
+    const maxY = Math.max(...nodes.map((node) => node.y + node.h / 2)) + 120;
 
-function fitView() {
-  const bounds = getBounds();
-  const w = canvas.clientWidth;
-  const h = canvas.clientHeight;
-  const sx = (w - 64) / bounds.w;
-  const sy = (h - 48) / bounds.h;
-  viewport.scale = Math.max(minScale, Math.min(maxScale, Math.min(sx, sy)));
-  viewport.x = w / 2 - ((bounds.minX + bounds.maxX) / 2) * viewport.scale;
-  viewport.y = h / 2 - ((bounds.minY + bounds.maxY) / 2) * viewport.scale;
-  focusedId = null;
-  focusInfo.textContent = "目前：顯示全部族譜";
-  draw();
-}
-
-function updateFocusInfo() {
-  if (!focusedId) {
-    focusInfo.textContent = "目前：顯示全部族譜";
-    return;
-  }
-  const node = nodeMap.get(focusedId);
-  const focusSet = computeFocusSet(focusedId);
-  focusInfo.textContent = `目前聚焦：${node.label}（直系高亮 ${focusSet.size - 1} 人）`;
-}
-
-function focusNodeById(nodeId, recenter = false) {
-  const node = nodeMap.get(nodeId);
-  if (!node) return;
-
-  focusedId = nodeId;
-  updateFocusInfo();
-
-  if (recenter) {
-    const targetScale = Math.max(viewport.scale, 0.62);
-    viewport.scale = targetScale;
-    viewport.x = canvas.clientWidth / 2 - node.x * targetScale;
-    viewport.y = canvas.clientHeight / 2 - node.y * targetScale;
-  }
-
-  draw();
-}
-
-function renderSearchResults(keyword) {
-  if (!searchResults) return;
-  searchResults.innerHTML = "";
-
-  if (!keyword) {
-    const empty = document.createElement("div");
-    empty.className = "search-empty";
-    empty.textContent = "輸入姓名關鍵字後顯示結果";
-    searchResults.appendChild(empty);
-    return;
-  }
-
-  const normalized = keyword.toLowerCase();
-  const matched = nodes
-    .filter((n) => n.label.toLowerCase().includes(normalized))
-    .sort((a, b) => a.label.localeCompare(b.label, "zh-Hant") || a.col - b.col || a.order - b.order)
-    .slice(0, 80);
-
-  if (matched.length === 0) {
-    const empty = document.createElement("div");
-    empty.className = "search-empty";
-    empty.textContent = "找不到符合的姓名";
-    searchResults.appendChild(empty);
-    return;
-  }
-
-  for (const node of matched) {
-    const item = document.createElement("button");
-    item.type = "button";
-    item.className = "search-item";
-
-    const title = document.createElement("strong");
-    title.textContent = node.label;
-
-    const info = document.createElement("small");
-    const parent = getParentLabel(node);
-    info.textContent = parent
-      ? `${generationLabel(node.col)} · 上代：${parent}`
-      : generationLabel(node.col);
-
-    item.appendChild(title);
-    item.appendChild(info);
-    item.addEventListener("click", () => {
-      focusNodeById(node.id, true);
-    });
-
-    searchResults.appendChild(item);
-  }
-}
-
-canvas.addEventListener("pointerdown", (e) => {
-  activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-  canvas.setPointerCapture(e.pointerId);
-  pointerStart = { x: e.clientX, y: e.clientY };
-
-  if (activePointers.size >= 2) {
-    const points = [...activePointers.values()];
-    const a = points[0];
-    const b = points[1];
-    const centerX = (a.x + b.x) / 2;
-    const centerY = (a.y + b.y) / 2;
-    const startDist = Math.hypot(a.x - b.x, a.y - b.y) || 1;
-    const startWorld = toWorld(centerX, centerY);
-    pinchState = {
-      startDist,
-      startScale: viewport.scale,
-      startWorld,
+    return {
+      minX,
+      maxX,
+      minY,
+      maxY,
+      w: maxX - minX,
+      h: maxY - minY,
     };
-    pressedNodeId = null;
-    pressedBlank = false;
-    isPanning = false;
-    panAnchor = null;
-    return;
   }
 
-  const hit = findNodeAt(e.clientX, e.clientY);
-  if (hit) {
-    pressedNodeId = hit.id;
-    pressedBlank = false;
-  } else {
-    pressedBlank = true;
-    isPanning = true;
-    panAnchor = { x: e.clientX - viewport.x, y: e.clientY - viewport.y };
-  }
-});
+  const viewport = {
+    x: 0,
+    y: 0,
+    scale: 1,
+  };
 
-canvas.addEventListener("pointermove", (e) => {
-  if (activePointers.has(e.pointerId)) {
-    activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  let focusedId = null;
+
+  function clampScale(scale) {
+    return Math.max(MIN_SCALE, Math.min(MAX_SCALE, scale));
   }
 
-  if (pinchState && activePointers.size >= 2) {
-    const points = [...activePointers.values()];
-    const a = points[0];
-    const b = points[1];
-    const centerX = (a.x + b.x) / 2;
-    const centerY = (a.y + b.y) / 2;
-    const currentDist = Math.hypot(a.x - b.x, a.y - b.y) || 1;
-    const nextScale = clampScale(pinchState.startScale * (currentDist / pinchState.startDist));
-    const rect = canvas.getBoundingClientRect();
-    viewport.scale = nextScale;
-    viewport.x = centerX - rect.left - pinchState.startWorld.x * nextScale;
-    viewport.y = centerY - rect.top - pinchState.startWorld.y * nextScale;
-    draw();
-    return;
+  function applyViewportTransform() {
+    worldLayer.setAttribute("transform", `translate(${viewport.x} ${viewport.y}) scale(${viewport.scale})`);
   }
 
-  if (isPanning) {
-    viewport.x = e.clientX - panAnchor.x;
-    viewport.y = e.clientY - panAnchor.y;
-    draw();
+  function updateColumnAndHeaderPositions() {
+    const topWorld = (HEADER_HEIGHT - viewport.y) / viewport.scale;
+    const bottomWorld = topWorld + stage.clientHeight / viewport.scale + 120;
+
+    for (let col = 0; col < columnLineElements.length; col += 1) {
+      const x = col * COL_GAP;
+      const line = columnLineElements[col];
+      line.setAttribute("x1", String(x));
+      line.setAttribute("x2", String(x));
+      line.setAttribute("y1", String(topWorld));
+      line.setAttribute("y2", String(bottomWorld));
+    }
+
+    const width = stage.clientWidth;
+    for (let col = 0; col < generationLabels.length; col += 1) {
+      const screenX = col * COL_GAP * viewport.scale + viewport.x;
+      const label = generationLabels[col];
+
+      if (screenX < -130 || screenX > width + 130) {
+        label.style.display = "none";
+        continue;
+      }
+
+      label.style.display = "flex";
+      label.style.left = `${screenX}px`;
+    }
   }
-});
 
-canvas.addEventListener("pointerup", (e) => {
-  activePointers.delete(e.pointerId);
+  function updateFocusInfo() {
+    if (!focusInfo) return;
+    if (!focusedId) {
+      focusInfo.textContent = "目前：顯示全部族譜";
+      return;
+    }
 
-  if (pinchState && activePointers.size < 2) {
-    pinchState = null;
-    pressedNodeId = null;
-    pressedBlank = false;
-    isPanning = false;
-    panAnchor = null;
-    pointerStart = null;
-    return;
+    const focusedNode = nodeMap.get(focusedId);
+    if (!focusedNode) {
+      focusInfo.textContent = "目前：顯示全部族譜";
+      return;
+    }
+
+    const focusSet = computeFocusSet(focusedId);
+    focusInfo.textContent = `目前：已選取 ${focusedNode.label}（直系 ${Math.max(0, focusSet.size - 1)} 人）`;
   }
 
-  const moved =
-    pointerStart &&
-    Math.hypot(e.clientX - pointerStart.x, e.clientY - pointerStart.y) > 5;
+  function updateFocusClasses() {
+    const focusSet = focusedId ? computeFocusSet(focusedId) : null;
 
-  if (!moved && pressedNodeId) {
-    focusNodeById(pressedNodeId, false);
-  } else if (!moved && pressedBlank) {
+    for (const node of nodes) {
+      const element = nodeElements.get(node.id);
+      if (!element) continue;
+
+      const active = !focusSet || focusSet.has(node.id);
+      const isFocused = focusedId === node.id;
+
+      element.classList.toggle("inactive", !active);
+      element.classList.toggle("focused", isFocused);
+    }
+
+    for (const edgePath of edgeElements) {
+      const sourceId = edgePath.getAttribute("data-source") || "";
+      const targetId = edgePath.getAttribute("data-target") || "";
+      const active = !focusSet || (focusSet.has(sourceId) && focusSet.has(targetId));
+      edgePath.classList.toggle("inactive", !active);
+    }
+  }
+
+  function render() {
+    applyViewportTransform();
+    updateColumnAndHeaderPositions();
+    updateFocusClasses();
+  }
+
+  function fitView() {
+    const bounds = getGraphBounds();
+    const stageWidth = stage.clientWidth;
+    const stageHeight = stage.clientHeight;
+    const drawableWidth = Math.max(40, stageWidth - 72);
+    const drawableHeight = Math.max(40, stageHeight - HEADER_HEIGHT - 36);
+
+    const scaleX = drawableWidth / bounds.w;
+    const scaleY = drawableHeight / bounds.h;
+
+    viewport.scale = clampScale(Math.min(scaleX, scaleY));
+
+    const worldCenterX = (bounds.minX + bounds.maxX) / 2;
+    const worldCenterY = (bounds.minY + bounds.maxY) / 2;
+
+    const screenCenterX = stageWidth / 2;
+    const screenCenterY = HEADER_HEIGHT + drawableHeight / 2;
+
+    viewport.x = screenCenterX - worldCenterX * viewport.scale;
+    viewport.y = screenCenterY - worldCenterY * viewport.scale;
+
     focusedId = null;
     updateFocusInfo();
-    draw();
+    render();
   }
 
-  pressedNodeId = null;
-  pressedBlank = false;
-  isPanning = false;
-  panAnchor = null;
-  pointerStart = null;
-});
+  function focusNodeById(nodeId, recenter = false) {
+    const node = nodeMap.get(nodeId);
+    if (!node) return;
 
-canvas.addEventListener("pointercancel", (e) => {
-  activePointers.delete(e.pointerId);
-  if (activePointers.size < 2) {
-    pinchState = null;
+    focusedId = nodeId;
+
+    if (recenter) {
+      const targetScale = Math.max(viewport.scale, 0.62);
+      const focusCenterY = HEADER_HEIGHT + (stage.clientHeight - HEADER_HEIGHT) / 2;
+      viewport.scale = targetScale;
+      viewport.x = stage.clientWidth / 2 - node.x * targetScale;
+      viewport.y = focusCenterY - node.y * targetScale;
+    }
+
+    updateFocusInfo();
+    render();
   }
-  pressedNodeId = null;
-  pressedBlank = false;
-  isPanning = false;
-  panAnchor = null;
-  pointerStart = null;
-});
 
-canvas.addEventListener("wheel", (e) => {
-  e.preventDefault();
-  const factor = e.deltaY < 0 ? 1.08 : 0.92;
-  zoomAtClientPoint(e.clientX, e.clientY, viewport.scale * factor);
-});
+  function localToWorld(localX, localY) {
+    return {
+      x: (localX - viewport.x) / viewport.scale,
+      y: (localY - viewport.y) / viewport.scale,
+    };
+  }
 
-if (searchInput) {
-  searchInput.addEventListener("input", () => {
-    renderSearchResults(searchInput.value.trim());
+  function clientToLocal(clientX, clientY) {
+    const rect = stage.getBoundingClientRect();
+    return {
+      x: clientX - rect.left,
+      y: clientY - rect.top,
+    };
+  }
+
+  function zoomAtLocal(localX, localY, targetScale) {
+    const world = localToWorld(localX, localY);
+    viewport.scale = clampScale(targetScale);
+    viewport.x = localX - world.x * viewport.scale;
+    viewport.y = localY - world.y * viewport.scale;
+    render();
+  }
+
+  function zoomAtCenter(factor) {
+    zoomAtLocal(stage.clientWidth / 2, stage.clientHeight / 2, viewport.scale * factor);
+  }
+
+  function zoomAtClient(clientX, clientY, targetScale) {
+    const local = clientToLocal(clientX, clientY);
+    zoomAtLocal(local.x, local.y, targetScale);
+  }
+
+  function renderSearchResults(keyword) {
+    if (!searchResults) return;
+    searchResults.innerHTML = "";
+
+    if (!keyword) {
+      const empty = document.createElement("div");
+      empty.className = "search-empty";
+      empty.textContent = "請輸入姓名關鍵字。";
+      searchResults.appendChild(empty);
+      return;
+    }
+
+    const normalized = keyword.toLocaleLowerCase();
+    const matchedNodes = nodes
+      .filter((node) => node.label.toLocaleLowerCase().includes(normalized))
+      .sort(
+        (a, b) =>
+          a.label.localeCompare(b.label, "zh-Hant") ||
+          a.col - b.col ||
+          a.order - b.order,
+      )
+      .slice(0, 120);
+
+    if (matchedNodes.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "search-empty";
+      empty.textContent = "找不到符合的姓名。";
+      searchResults.appendChild(empty);
+      return;
+    }
+
+    for (const node of matchedNodes) {
+      const item = document.createElement("button");
+      item.type = "button";
+      item.className = "search-item";
+
+      const title = document.createElement("strong");
+      title.textContent = node.label;
+
+      const info = document.createElement("small");
+      const parentLabel = getPrimaryParentLabel(node);
+      info.textContent = parentLabel
+        ? `${generationLabel(node.col)} ｜上代：${parentLabel}`
+        : generationLabel(node.col);
+
+      item.appendChild(title);
+      item.appendChild(info);
+
+      item.addEventListener("click", () => {
+        focusNodeById(node.id, true);
+      });
+
+      searchResults.appendChild(item);
+    }
+  }
+
+  const activePointers = new Map();
+  let pointerStart = null;
+  let pressedNodeId = null;
+  let pressedBlank = false;
+  let isPanning = false;
+  let panAnchor = null;
+  let pinchState = null;
+
+  function pointerDistance(a, b) {
+    return Math.hypot(a.x - b.x, a.y - b.y);
+  }
+
+  function startPinchIfReady() {
+    if (activePointers.size < 2) return;
+
+    const points = [...activePointers.values()];
+    const pointA = points[0];
+    const pointB = points[1];
+
+    const centerClientX = (pointA.x + pointB.x) / 2;
+    const centerClientY = (pointA.y + pointB.y) / 2;
+    const centerLocal = clientToLocal(centerClientX, centerClientY);
+
+    pinchState = {
+      startDist: Math.max(1, pointerDistance(pointA, pointB)),
+      startScale: viewport.scale,
+      startWorld: localToWorld(centerLocal.x, centerLocal.y),
+    };
+
+    pressedNodeId = null;
+    pressedBlank = false;
+    isPanning = false;
+    panAnchor = null;
+    svg.classList.remove("is-panning");
+  }
+
+  svg.addEventListener("pointerdown", (event) => {
+    activePointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    svg.setPointerCapture(event.pointerId);
+
+    pointerStart = { x: event.clientX, y: event.clientY };
+    startPinchIfReady();
+    if (pinchState) return;
+
+    const nodeElement = event.target.closest(".graph-node");
+
+    if (nodeElement) {
+      pressedNodeId = nodeElement.getAttribute("data-id");
+      pressedBlank = false;
+      isPanning = false;
+      panAnchor = null;
+      return;
+    }
+
+    pressedNodeId = null;
+    pressedBlank = true;
+    isPanning = true;
+
+    const local = clientToLocal(event.clientX, event.clientY);
+    panAnchor = {
+      x: local.x - viewport.x,
+      y: local.y - viewport.y,
+    };
+    svg.classList.add("is-panning");
   });
 
-  searchInput.addEventListener("keydown", (e) => {
-    if (e.key !== "Enter") return;
-    const firstItem = searchResults?.querySelector(".search-item");
-    if (firstItem) {
-      firstItem.click();
-      e.preventDefault();
+  svg.addEventListener("pointermove", (event) => {
+    if (activePointers.has(event.pointerId)) {
+      activePointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    }
+
+    if (pinchState && activePointers.size >= 2) {
+      const points = [...activePointers.values()];
+      const pointA = points[0];
+      const pointB = points[1];
+
+      const centerClientX = (pointA.x + pointB.x) / 2;
+      const centerClientY = (pointA.y + pointB.y) / 2;
+      const centerLocal = clientToLocal(centerClientX, centerClientY);
+      const currentDist = Math.max(1, pointerDistance(pointA, pointB));
+
+      viewport.scale = clampScale(pinchState.startScale * (currentDist / pinchState.startDist));
+      viewport.x = centerLocal.x - pinchState.startWorld.x * viewport.scale;
+      viewport.y = centerLocal.y - pinchState.startWorld.y * viewport.scale;
+
+      render();
+      return;
+    }
+
+    if (isPanning && panAnchor) {
+      const local = clientToLocal(event.clientX, event.clientY);
+      viewport.x = local.x - panAnchor.x;
+      viewport.y = local.y - panAnchor.y;
+      render();
     }
   });
-}
 
-resetBtn.addEventListener("click", fitView);
-if (zoomInBtn) {
-  zoomInBtn.addEventListener("click", () => zoomAtCenter(1.12));
-}
-if (zoomOutBtn) {
-  zoomOutBtn.addEventListener("click", () => zoomAtCenter(0.88));
-}
+  function clearPointerInteraction() {
+    pointerStart = null;
+    pressedNodeId = null;
+    pressedBlank = false;
+    isPanning = false;
+    panAnchor = null;
+    svg.classList.remove("is-panning");
+  }
 
-window.addEventListener("resize", () => {
-  resizeCanvas();
-  draw();
-});
+  svg.addEventListener("pointerup", (event) => {
+    activePointers.delete(event.pointerId);
 
-resizeCanvas();
-measureNodeSizes();
-fitView();
-renderSearchResults("");
+    if (pinchState && activePointers.size < 2) {
+      pinchState = null;
+      clearPointerInteraction();
+      return;
+    }
+
+    const moved =
+      pointerStart && Math.hypot(event.clientX - pointerStart.x, event.clientY - pointerStart.y) > 6;
+
+    if (!moved && pressedNodeId) {
+      focusNodeById(pressedNodeId, false);
+    } else if (!moved && pressedBlank) {
+      focusedId = null;
+      updateFocusInfo();
+      render();
+    }
+
+    clearPointerInteraction();
+  });
+
+  svg.addEventListener("pointercancel", (event) => {
+    activePointers.delete(event.pointerId);
+    if (activePointers.size < 2) pinchState = null;
+    clearPointerInteraction();
+  });
+
+  svg.addEventListener(
+    "wheel",
+    (event) => {
+      event.preventDefault();
+      const factor = event.deltaY < 0 ? 1.1 : 0.9;
+      zoomAtClient(event.clientX, event.clientY, viewport.scale * factor);
+    },
+    { passive: false },
+  );
+
+  if (searchInput) {
+    searchInput.addEventListener("input", () => {
+      renderSearchResults(searchInput.value.trim());
+    });
+
+    searchInput.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter") return;
+      const firstResult = searchResults?.querySelector(".search-item");
+      if (!firstResult) return;
+      firstResult.click();
+      event.preventDefault();
+    });
+  }
+
+  if (resetBtn) {
+    resetBtn.addEventListener("click", () => {
+      fitView();
+    });
+  }
+
+  if (zoomInBtn) {
+    zoomInBtn.addEventListener("click", () => {
+      zoomAtCenter(1.12);
+    });
+  }
+
+  if (zoomOutBtn) {
+    zoomOutBtn.addEventListener("click", () => {
+      zoomAtCenter(0.88);
+    });
+  }
+
+  window.addEventListener("resize", () => {
+    render();
+  });
+
+  fitView();
+  renderSearchResults("");
+})();

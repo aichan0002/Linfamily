@@ -15,15 +15,39 @@
         <button id="resetBtn" type="button">重置視圖</button>
       </div>
     </header>
+
     <main class="graph-wrap">
-      <canvas id="graphCanvas"></canvas>
+      <section id="graphStage" class="graph-stage" aria-label="林氏忠孝堂族譜圖">
+        <div id="generationOverlay" class="generation-overlay"></div>
+        <svg id="graphSvg" role="img" aria-label="林氏忠孝堂族譜 Graph">
+          <defs>
+            <marker
+              id="arrowHead"
+              markerWidth="9"
+              markerHeight="6"
+              refX="8"
+              refY="3"
+              orient="auto-start-reverse"
+              markerUnits="strokeWidth"
+            >
+              <path d="M0,0 L9,3 L0,6 z"></path>
+            </marker>
+          </defs>
+          <g id="worldLayer">
+            <g id="columnLayer"></g>
+            <g id="edgeLayer"></g>
+            <g id="nodeLayer"></g>
+          </g>
+        </svg>
+      </section>
+
       <aside class="panel">
         <h2>族譜操作</h2>
         <ul>
           <li>拖曳空白處：平移視圖</li>
           <li>滑鼠滾輪：縮放</li>
           <li>手機可雙指縮放或用上方按鈕放大/縮小</li>
-          <li>人物框固定位置（不可拖曳）</li>
+          <li>Graph 節點固定位置（不可拖曳）</li>
           <li>點擊節點：高亮該人的直系上下血脈</li>
         </ul>
         <p id="focusInfo">目前：顯示全部族譜</p>
@@ -37,6 +61,7 @@
         <p class="hint">註：此圖依你提供的表格整理，若要補配偶、字輩註記或修正人名，我可以再幫你更新。</p>
       </aside>
     </main>
+
     <script src="./familyData.js"></script>
     <script src="./app.js"></script>
   </body>

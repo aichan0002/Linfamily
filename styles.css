@@ -8,7 +8,7 @@
   --line-strong: #8a7751;
   --accent: #9f2f1f;
   --node: #2f3f53;
-  --node-focus: #9f2f1f;
+  --node-focus: #a43a28;
 }
 
 * {
@@ -72,9 +72,9 @@ body {
   padding: 12px;
 }
 
-#graphCanvas {
-  width: 100%;
-  height: 100%;
+.graph-stage {
+  position: relative;
+  overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 14px;
   background:
@@ -82,7 +82,116 @@ body {
     linear-gradient(180deg, rgba(162, 143, 103, 0.09) 1px, transparent 1px),
     var(--surface);
   background-size: 24px 24px;
+}
+
+#graphSvg {
+  width: 100%;
+  height: 100%;
+  display: block;
   touch-action: none;
+  cursor: grab;
+}
+
+#graphSvg.is-panning {
+  cursor: grabbing;
+}
+
+.generation-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 52px;
+  pointer-events: none;
+  background: rgba(255, 252, 245, 0.92);
+  border-bottom: 1px solid rgba(138, 119, 81, 0.35);
+  backdrop-filter: blur(2px);
+}
+
+.generation-label {
+  position: absolute;
+  top: 0;
+  height: 52px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  padding: 0 6px;
+}
+
+.generation-index {
+  font-weight: 600;
+  color: #6b5b3d;
+  font-size: 15px;
+}
+
+.generation-marker {
+  font-weight: 800;
+  color: var(--accent);
+  font-size: 17px;
+}
+
+.column-guide {
+  stroke: rgba(138, 119, 81, 0.3);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+#arrowHead path {
+  fill: rgba(93, 59, 19, 0.85);
+}
+
+.graph-edge {
+  fill: none;
+  stroke: rgba(93, 59, 19, 0.78);
+  stroke-width: 2.2;
+  marker-end: url(#arrowHead);
+  vector-effect: non-scaling-stroke;
+  transition: opacity 120ms ease;
+}
+
+.graph-edge.inactive {
+  opacity: 0.16;
+}
+
+.graph-node {
+  cursor: pointer;
+  transition: opacity 120ms ease;
+}
+
+.graph-node rect {
+  fill: var(--node);
+  stroke: rgba(255, 249, 237, 0.2);
+  stroke-width: 1;
+  filter: drop-shadow(0 4px 6px rgba(22, 28, 37, 0.25));
+}
+
+.graph-node text {
+  fill: #fffaf0;
+  text-anchor: middle;
+  user-select: none;
+  pointer-events: none;
+}
+
+.graph-node .name {
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.graph-node .note {
+  font-size: 11px;
+  opacity: 0.86;
+}
+
+.graph-node.focused rect {
+  fill: var(--node-focus);
+  stroke: #e0af65;
+  stroke-width: 2;
+}
+
+.graph-node.inactive {
+  opacity: 0.23;
 }
 
 .panel {
@@ -203,7 +312,7 @@ body {
     min-height: calc(100dvh - 60px);
   }
 
-  #graphCanvas {
+  .graph-stage {
     min-height: 56dvh;
   }
 
