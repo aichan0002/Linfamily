@@ -85,50 +85,10 @@ function link(parentId, childId) {
 }
 
 const lastPathNodeByCol = Array.from({ length: columns.length }, () => null);
-let lastPathValues = null;
 
-function isNoteLikeText(value) {
-  if (!value) return false;
-  return /孺人|太夫人|\/|女|返|居|大陸|巴拉圭|多明尼加|入/.test(value);
-}
-
-function resolveContinuationRow(row, previousPath) {
-  if (!previousPath) return null;
-
-  const nonNullCols = [];
-  for (let i = 0; i < row.length; i += 1) {
-    if (row[i]) nonNullCols.push(i);
-  }
-  if (nonNullCols.length === 0) return null;
-
-  const values = nonNullCols.map((i) => row[i]);
-  const hasGong = values.some((v) => v.includes("公"));
-  const allNoteLike = values.every((v) => isNoteLikeText(v));
-  const firstCol = nonNullCols[0];
-  const likelyContinuation = hasGong || (nonNullCols.length >= 2 && !allNoteLike && firstCol <= 6);
-
-  if (!likelyContinuation) return null;
-
-  const resolved = [...previousPath];
-  for (let c = firstCol; c < resolved.length; c += 1) {
-    resolved[c] = null;
-  }
-  for (const c of nonNullCols) {
-    resolved[c] = row[c];
-  }
-  if (!resolved[0] && rootName) {
-    resolved[0] = rootName;
-  }
-  return resolved;
-}
 
 for (const row of tableRows) {
-  let pathValues = null;
-  if (rootName && row[0] === rootName) {
-    pathValues = [...row];
-  } else {
-    pathValues = resolveContinuationRow(row, lastPathValues);
-  }
+  const pathValues = rootName && row[0] === rootName ? [...row] : null;
 
   if (pathValues) {
     for (let i = 0; i < lastPathNodeByCol.length; i += 1) {
@@ -152,8 +112,6 @@ for (const row of tableRows) {
       }
       prevNodeId = id;
     }
-
-    lastPathValues = pathValues;
   } else {
     for (let col = 0; col < columns.length; col += 1) {
       const note = row[col];
