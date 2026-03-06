@@ -1,14 +1,12 @@
 ﻿:root {
-  --bg: #0d1623;
-  --surface: #111c2a;
-  --surface-soft: #192838;
-  --text: #e6f4ee;
-  --muted: #9fb8b0;
-  --line: #2d4055;
-  --line-strong: #3f566f;
-  --accent: #57d9b5;
-  --node: #172535;
-  --node-focus: #2c9f80;
+  --bg: #0a111b;
+  --surface: #111b28;
+  --surface-soft: #1a2738;
+  --text: #eaf5f0;
+  --muted: #9db1c0;
+  --line: #2a3b4f;
+  --line-strong: #3f556d;
+  --accent: #67efc5;
 }
 
 * {
@@ -19,28 +17,22 @@ html,
 body {
   margin: 0;
   height: 100%;
-  font-family: "Noto Serif TC", "Microsoft JhengHei", serif;
+  font-family: "Noto Sans TC", "Microsoft JhengHei", "Segoe UI", sans-serif;
   color: var(--text);
   background:
-    radial-gradient(circle at 12% 16%, rgba(39, 61, 83, 0.45) 0%, transparent 36%),
-    radial-gradient(circle at 92% 86%, rgba(34, 119, 98, 0.24) 0%, transparent 40%),
-    linear-gradient(180deg, #0c1522 0%, #101b2a 100%);
+    radial-gradient(circle at 14% 18%, rgba(63, 84, 108, 0.35) 0%, transparent 38%),
+    radial-gradient(circle at 88% 82%, rgba(35, 145, 116, 0.2) 0%, transparent 42%),
+    linear-gradient(180deg, #0b1320 0%, #0d1725 100%);
 }
 
 .toolbar {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   padding: 12px 16px;
   border-bottom: 1px solid var(--line);
-  background: rgba(15, 24, 37, 0.9);
-}
-
-.toolbar h1 {
-  margin: 0;
-  font-size: 20px;
-  letter-spacing: 1px;
+  background: rgba(13, 22, 34, 0.92);
 }
 
 .title-wrap {
@@ -49,17 +41,23 @@ body {
   gap: 10px;
 }
 
+.toolbar h1 {
+  margin: 0;
+  font-size: 20px;
+  letter-spacing: 0.6px;
+  font-weight: 650;
+}
+
 .version-badge {
   display: inline-flex;
   align-items: center;
-  border: 1px solid rgba(149, 245, 216, 0.65);
+  border: 1px solid rgba(143, 255, 219, 0.58);
   border-radius: 999px;
   padding: 3px 10px;
   font-size: 12px;
   line-height: 1;
-  color: #d8fff1;
-  background: rgba(44, 159, 128, 0.22);
-  letter-spacing: 0.2px;
+  color: #ddfff3;
+  background: rgba(53, 170, 136, 0.24);
 }
 
 .actions {
@@ -94,12 +92,12 @@ body {
 .graph-stage {
   position: relative;
   overflow: hidden;
-  border: 1px solid #334257;
+  border: 1px solid #2e4158;
   border-radius: 14px;
   background:
-    radial-gradient(circle at 18% 12%, rgba(49, 71, 94, 0.25) 0%, transparent 40%),
-    radial-gradient(circle at 82% 88%, rgba(31, 140, 115, 0.18) 0%, transparent 42%),
-    linear-gradient(180deg, #0f1824 0%, #111c2a 100%);
+    radial-gradient(circle at 17% 12%, rgba(72, 94, 124, 0.24) 0%, transparent 44%),
+    radial-gradient(circle at 84% 88%, rgba(52, 177, 140, 0.18) 0%, transparent 46%),
+    linear-gradient(180deg, #0f1825 0%, #111d2c 100%);
 }
 
 #graphSvg {
@@ -114,45 +112,63 @@ body {
   cursor: grabbing;
 }
 
-.generation-overlay {
-  display: none;
-}
-
 .graph-edge {
   transition: opacity 120ms ease;
 }
 
 .graph-edge-line {
   fill: none;
-  stroke: rgba(118, 230, 196, 0.82);
-  stroke-width: 2.1;
+  stroke: rgba(123, 138, 159, 0.66);
+  stroke-width: 1.9;
   stroke-linecap: round;
   vector-effect: non-scaling-stroke;
 }
 
 .graph-edge-arrow {
   fill: none;
-  stroke: rgba(149, 245, 216, 0.94);
-  stroke-width: 2.1;
+  stroke: rgba(144, 162, 185, 0.8);
+  stroke-width: 1.9;
   stroke-linecap: round;
   stroke-linejoin: round;
   vector-effect: non-scaling-stroke;
 }
 
+.graph-edge.active .graph-edge-line {
+  stroke: rgba(104, 239, 197, 0.95);
+}
+
+.graph-edge.active .graph-edge-arrow {
+  stroke: rgba(136, 255, 218, 0.98);
+}
+
 .graph-edge.inactive {
-  opacity: 0.18;
+  opacity: 0.16;
 }
 
 .graph-node {
   cursor: pointer;
   transition: opacity 120ms ease;
+  --node-fill: #1a2637;
+  --node-ring: #86d7be;
+  --node-halo: rgba(132, 229, 199, 0.24);
+}
+
+.graph-node .node-halo {
+  fill: var(--node-halo);
+  opacity: 0.3;
+  filter: blur(9px);
+}
+
+.graph-node .node-ring {
+  fill: none;
+  stroke: color-mix(in srgb, var(--node-ring) 75%, white 25%);
+  stroke-width: 2;
 }
 
 .graph-node .node-core {
-  fill: var(--node);
-  stroke: rgba(137, 231, 201, 0.58);
-  stroke-width: 1.3;
-  filter: drop-shadow(0 7px 15px rgba(8, 12, 18, 0.62));
+  fill: var(--node-fill);
+  stroke: rgba(225, 248, 255, 0.25);
+  stroke-width: 1;
 }
 
 .graph-node text {
@@ -164,19 +180,22 @@ body {
 
 .graph-node .name {
   dominant-baseline: middle;
-  font-size: 15px;
-  font-weight: 700;
+  font-size: 14px;
+  font-weight: 650;
 }
 
 .graph-node .note {
   font-size: 11px;
-  opacity: 0.88;
+  opacity: 0.86;
 }
 
-.graph-node.focused .node-core {
-  fill: var(--node-focus);
-  stroke: #ddfff4;
-  stroke-width: 2.2;
+.graph-node.focused .node-ring {
+  stroke: #ccffee;
+  stroke-width: 2.8;
+}
+
+.graph-node.focused .node-halo {
+  opacity: 0.68;
 }
 
 .graph-node.inactive {
@@ -186,7 +205,7 @@ body {
 .panel {
   border: 1px solid var(--line);
   border-radius: 14px;
-  background: rgba(17, 28, 42, 0.9);
+  background: rgba(15, 24, 37, 0.9);
   padding: 14px;
   display: flex;
   flex-direction: column;
@@ -243,7 +262,7 @@ body {
   margin-top: 8px;
   border: 1px solid var(--line);
   border-radius: 10px;
-  background: #152334;
+  background: #142233;
   max-height: 210px;
   overflow: auto;
 }
@@ -357,5 +376,3 @@ body {
     padding: 12px;
   }
 }
-
-

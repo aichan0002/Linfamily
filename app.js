@@ -13,7 +13,7 @@
   const searchResults = document.getElementById("searchResults");
   const versionBadge = document.getElementById("versionBadge");
 
-  const APP_VERSION = "v2026.03.06-04";
+  const APP_VERSION = "v2026.03.06-05";
 
   if (versionBadge) {
     versionBadge.textContent = `版本 ${APP_VERSION}`;
@@ -27,6 +27,14 @@
 
   const MIN_SCALE = 0.08;
   const MAX_SCALE = 2.7;
+
+  const NODE_TONES = [
+    { fill: "#1a2a3f", ring: "#74eac7", halo: "rgba(116,234,199,0.26)" },
+    { fill: "#222f47", ring: "#7bb4ff", halo: "rgba(123,180,255,0.24)" },
+    { fill: "#2a2d4c", ring: "#b89dff", halo: "rgba(184,157,255,0.24)" },
+    { fill: "#2a3f47", ring: "#7de4ff", halo: "rgba(125,228,255,0.24)" },
+    { fill: "#283044", ring: "#9ee8c7", halo: "rgba(158,232,199,0.24)" },
+  ];
 
   const columns = Array.isArray(window.FAMILY_COLUMNS)
     ? window.FAMILY_COLUMNS.map((column) => ({
@@ -170,7 +178,8 @@
       node.note = `${filteredNotes[0]} 等${filteredNotes.length}位`;
     }
 
-    node.r = Math.max(28, Math.min(48, 24 + Math.ceil(node.label.length * 2.6)));
+    const degree = node.parents.length + node.children.length;
+    node.r = Math.max(28, Math.min(46, 22 + Math.ceil(node.label.length * 2.2 + degree * 1.4)));
   }
 
   function hashText(text) {
@@ -181,26 +190,30 @@
     return hash;
   }
 
+  function toneForCol(col) {
+    return NODE_TONES[Math.abs(col) % NODE_TONES.length];
+  }
+
   function initializeForceLayout() {
     const count = Math.max(nodes.length, 1);
-    const radius = Math.max(260, Math.sqrt(count) * 80);
+    const radius = Math.max(240, Math.sqrt(count) * 74);
 
     for (let i = 0; i < nodes.length; i += 1) {
       const node = nodes[i];
       const angle = (i / count) * Math.PI * 2;
       const noise = (hashText(node.id) % 1000) / 1000 - 0.5;
-      node.x = Math.cos(angle) * radius + noise * 90;
-      node.y = Math.sin(angle) * radius + noise * 90;
+      node.x = Math.cos(angle) * radius + noise * 100;
+      node.y = Math.sin(angle) * radius + noise * 100;
       node.vx = 0;
       node.vy = 0;
     }
 
-    const repulsion = 28000;
+    const repulsion = 26500;
     const spring = 0.014;
-    const idealLength = 165;
-    const centerPull = 0.0024;
-    const damping = 0.86;
-    const iterations = 180;
+    const idealLength = 158;
+    const centerPull = 0.0021;
+    const damping = 0.87;
+    const iterations = 190;
 
     for (let iter = 0; iter < iterations; iter += 1) {
       for (const node of nodes) {
@@ -275,16 +288,10 @@
 
   for (const edge of edges) {
     const group = createSvgElement("g", { class: "graph-edge" });
-    const line = createSvgElement("path", {
-      class: "graph-edge-line",
-      "data-source": edge.source,
-      "data-target": edge.target,
-    });
+    const line = createSvgElement("path", { class: "graph-edge-line" });
     const arrow = createSvgElement("path", {
       class: "graph-edge-arrow",
-      d: "M -10 -6 L 0 0 L -10 6",
-      "data-source": edge.source,
-      "data-target": edge.target,
+      d: "M -10 -5.5 L 0 0 L -10 5.5",
     });
 
     group.appendChild(line);
@@ -308,7 +315,26 @@
       transform: `translate(${node.x} ${node.y})`,
     });
 
-    const circle = createSvgElement("circle", {
+    const tone = toneForCol(node.col);
+    group.style.setProperty("--node-fill", tone.fill);
+    group.style.setProperty("--node-ring", tone.ring);
+    group.style.setProperty("--node-halo", tone.halo);
+
+    const halo = createSvgElement("circle", {
+      class: "node-halo",
+      cx: 0,
+      cy: 0,
+      r: node.r + 8,
+    });
+
+    const ring = createSvgElement("circle", {
+      class: "node-ring",
+      cx: 0,
+      cy: 0,
+      r: node.r + 1.5,
+    });
+
+    const core = createSvgElement("circle", {
       class: "node-core",
       cx: 0,
       cy: 0,
@@ -322,7 +348,9 @@
     });
     nameText.textContent = node.label;
 
-    group.appendChild(circle);
+    group.appendChild(halo);
+    group.appendChild(ring);
+    group.appendChild(core);
     group.appendChild(nameText);
 
     if (node.note) {
@@ -400,10 +428,10 @@
       return { minX: -120, maxX: 120, minY: -120, maxY: 120, w: 240, h: 240 };
     }
 
-    const minX = Math.min(...nodes.map((node) => node.x - node.r)) - 120;
-    const maxX = Math.max(...nodes.map((node) => node.x + node.r)) + 120;
-    const minY = Math.min(...nodes.map((node) => node.y - node.r)) - 120;
-    const maxY = Math.max(...nodes.map((node) => node.y + node.r + (node.note ? 18 : 0))) + 120;
+    const minX = Math.min(...nodes.map((node) => node.x - node.r - 10)) - 90;
+    const maxX = Math.max(...nodes.map((node) => node.x + node.r + 10)) + 90;
+    const minY = Math.min(...nodes.map((node) => node.y - node.r - 10)) - 90;
+    const maxY = Math.max(...nodes.map((node) => node.y + node.r + (node.note ? 18 : 0) + 10)) + 90;
 
     return {
       minX,
@@ -449,9 +477,14 @@
     }
 
     for (const edgeVisual of edgeVisuals) {
-      const active =
-        !focusSet ||
-        (focusSet.has(edgeVisual.source) && focusSet.has(edgeVisual.target));
+      if (!focusSet) {
+        edgeVisual.group.classList.remove("inactive");
+        edgeVisual.group.classList.remove("active");
+        continue;
+      }
+
+      const active = focusSet.has(edgeVisual.source) && focusSet.has(edgeVisual.target);
+      edgeVisual.group.classList.toggle("active", active);
       edgeVisual.group.classList.toggle("inactive", !active);
     }
   }
@@ -463,10 +496,10 @@
     const ux = dx / dist;
     const uy = dy / dist;
 
-    const startX = sourceNode.x + ux * (sourceNode.r + 1);
-    const startY = sourceNode.y + uy * (sourceNode.r + 1);
-    const endX = targetNode.x - ux * (targetNode.r + 12);
-    const endY = targetNode.y - uy * (targetNode.r + 12);
+    const startX = sourceNode.x + ux * (sourceNode.r + 2);
+    const startY = sourceNode.y + uy * (sourceNode.r + 2);
+    const endX = targetNode.x - ux * (targetNode.r + 13);
+    const endY = targetNode.y - uy * (targetNode.r + 13);
 
     return { startX, startY, endX, endY, dist, ux, uy };
   }
@@ -479,13 +512,15 @@
     const points = edgeEndpoints(sourceNode, targetNode);
     const perpX = -points.uy;
     const perpY = points.ux;
-    const curveAmount = Math.max(10, Math.min(42, points.dist * 0.14)) * edgeVisual.curveSign;
+    const curveAmount = Math.max(10, Math.min(34, points.dist * 0.12)) * edgeVisual.curveSign;
 
     const ctrlX = (points.startX + points.endX) / 2 + perpX * curveAmount;
     const ctrlY = (points.startY + points.endY) / 2 + perpY * curveAmount;
 
-    const pathData = `M ${points.startX} ${points.startY} Q ${ctrlX} ${ctrlY} ${points.endX} ${points.endY}`;
-    edgeVisual.line.setAttribute("d", pathData);
+    edgeVisual.line.setAttribute(
+      "d",
+      `M ${points.startX} ${points.startY} Q ${ctrlX} ${ctrlY} ${points.endX} ${points.endY}`,
+    );
 
     const tanX = points.endX - ctrlX;
     const tanY = points.endY - ctrlY;
@@ -511,6 +546,7 @@
     if (edgeGeometryDirty) {
       refreshGeometry();
     }
+
     applyViewportTransform();
     updateFocusClasses();
   }
@@ -551,8 +587,8 @@
     const bounds = getGraphBounds();
     const stageWidth = stage.clientWidth;
     const stageHeight = stage.clientHeight;
-    const drawableWidth = Math.max(40, stageWidth - 72);
-    const drawableHeight = Math.max(40, stageHeight - 36);
+    const drawableWidth = Math.max(40, stageWidth - 70);
+    const drawableHeight = Math.max(40, stageHeight - 30);
 
     const scaleX = drawableWidth / bounds.w;
     const scaleY = drawableHeight / bounds.h;
@@ -578,7 +614,7 @@
     focusedId = nodeId;
 
     if (recenter) {
-      const targetScale = zoomOnCenter ? Math.max(viewport.scale, 0.7) : viewport.scale;
+      const targetScale = zoomOnCenter ? Math.max(viewport.scale, 0.72) : viewport.scale;
       const targetX = stage.clientWidth / 2 - node.x * targetScale;
       const targetY = stage.clientHeight / 2 - node.y * targetScale;
       updateFocusInfo();
@@ -905,4 +941,3 @@
   fitView();
   renderSearchResults("");
 })();
-
