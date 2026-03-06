@@ -1,4 +1,4 @@
-﻿const canvas = document.getElementById("graphCanvas");
+const canvas = document.getElementById("graphCanvas");
 const ctx = canvas.getContext("2d");
 const focusInfo = document.getElementById("focusInfo");
 const resetBtn = document.getElementById("resetBtn");
@@ -431,6 +431,111 @@ function getEdgeLaneX(sourceCol, targetCol) {
   return ((minCol + maxCol) * colGap) / 2;
 }
 
+function addAxisInterval(buckets, axisValue, from, to, active) {
+  const start = Math.min(from, to);
+  const end = Math.max(from, to);
+  if (end - start <= 0.01) return;
+
+  const key = axisValue.toFixed(3);
+  if (!buckets.has(key)) {
+    buckets.set(key, { axisValue, intervals: [] });
+  }
+  buckets.get(key).intervals.push({ start, end, active });
+}
+
+function mergeIntervalsWithPriority(intervals) {
+  if (intervals.length === 0) return [];
+
+  const points = new Set();
+  for (const interval of intervals) {
+    points.add(interval.start);
+    points.add(interval.end);
+  }
+
+  const sorted = [...points].sort((a, b) => a - b);
+  const merged = [];
+
+  for (let i = 0; i < sorted.length - 1; i += 1) {
+    const segStart = sorted[i];
+    const segEnd = sorted[i + 1];
+    if (segEnd - segStart <= 0.01) continue;
+
+    let covered = false;
+    let hasActive = false;
+    for (const interval of intervals) {
+      if (interval.start < segEnd - 1e-6 && interval.end > segStart + 1e-6) {
+        covered = true;
+        if (interval.active) hasActive = true;
+      }
+    }
+
+    if (!covered) continue;
+
+    const last = merged[merged.length - 1];
+    if (last && last.active === hasActive && Math.abs(last.end - segStart) <= 0.01) {
+      last.end = segEnd;
+    } else {
+      merged.push({ start: segStart, end: segEnd, active: hasActive });
+    }
+  }
+
+  return merged;
+}
+
+function buildEdgeSegments(focusSet) {
+  const verticalBuckets = new Map();
+  const horizontalBuckets = new Map();
+
+  for (const edge of edges) {
+    const s = nodeMap.get(edge.source);
+    const t = nodeMap.get(edge.target);
+    const active = !focusSet || (focusSet.has(s.id) && focusSet.has(t.id));
+    const fromX = s.x + s.w / 2;
+    const fromY = s.y;
+    const toX = t.x - t.w / 2;
+    const toY = t.y;
+    const laneX = getEdgeLaneX(s.col, t.col);
+
+    if (Math.abs(fromX - laneX) > 0.4) {
+      addAxisInterval(horizontalBuckets, fromY, fromX, laneX, active);
+    }
+    addAxisInterval(verticalBuckets, laneX, fromY, toY, active);
+    if (Math.abs(toX - laneX) > 0.4) {
+      addAxisInterval(horizontalBuckets, toY, laneX, toX, active);
+    }
+  }
+
+  const segments = [];
+
+  for (const bucket of verticalBuckets.values()) {
+    const merged = mergeIntervalsWithPriority(bucket.intervals);
+    for (const interval of merged) {
+      segments.push({
+        x1: bucket.axisValue,
+        y1: interval.start,
+        x2: bucket.axisValue,
+        y2: interval.end,
+        active: interval.active,
+      });
+    }
+  }
+
+  for (const bucket of horizontalBuckets.values()) {
+    const merged = mergeIntervalsWithPriority(bucket.intervals);
+    for (const interval of merged) {
+      segments.push({
+        x1: interval.start,
+        y1: bucket.axisValue,
+        x2: interval.end,
+        y2: bucket.axisValue,
+        active: interval.active,
+      });
+    }
+  }
+
+  return segments;
+}
+
 function draw() {
   const w = canvas.clientWidth;
   const h = canvas.clientHeight;
@@ -454,27 +559,13 @@ function draw() {
 
   const focusSet = focusedId ? computeFocusSet(focusedId) : null;
 
-  for (const edge of edges) {
-    const s = nodeMap.get(edge.source);
-    const t = nodeMap.get(edge.target);
-    const active = !focusSet || (focusSet.has(s.id) && focusSet.has(t.id));
-    const fromX = s.x + s.w / 2;
-    const fromY = s.y;
-    const toX = t.x - t.w / 2;
-    const toY = t.y;
-    const laneX = getEdgeLaneX(s.col, t.col);
-
+  const edgeSegments = buildEdgeSegments(focusSet);
+  for (const segment of edgeSegments) {
     ctx.beginPath();
-    ctx.moveTo(fromX, fromY);
-    if (Math.abs(fromX - laneX) > 0.4) {
-      ctx.lineTo(laneX, fromY);
-    }
-    ctx.lineTo(laneX, toY);
-    if (Math.abs(toX - laneX) > 0.4) {
-      ctx.lineTo(toX, toY);
-    }
-    ctx.lineWidth = active ? 2.2 : 1;
-    ctx.strokeStyle = active ? "rgba(93, 59, 19, 0.82)" : "rgba(93, 59, 19, 0.2)";
+    ctx.moveTo(segment.x1, segment.y1);
+    ctx.lineTo(segment.x2, segment.y2);
+    ctx.lineWidth = segment.active ? 2.2 : 1;
+    ctx.strokeStyle = segment.active ? "rgba(93, 59, 19, 0.82)" : "rgba(93, 59, 19, 0.2)";
     ctx.stroke();
   }
 
