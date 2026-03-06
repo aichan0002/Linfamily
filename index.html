@@ -20,19 +20,6 @@
       <section id="graphStage" class="graph-stage" aria-label="林氏忠孝堂族譜圖">
         <div id="generationOverlay" class="generation-overlay"></div>
         <svg id="graphSvg" role="img" aria-label="林氏忠孝堂族譜 Graph">
-          <defs>
-            <marker
-              id="arrowHead"
-              markerWidth="9"
-              markerHeight="6"
-              refX="8"
-              refY="3"
-              orient="auto-start-reverse"
-              markerUnits="strokeWidth"
-            >
-              <path d="M0,0 L9,3 L0,6 z"></path>
-            </marker>
-          </defs>
           <g id="worldLayer">
             <g id="columnLayer"></g>
             <g id="edgeLayer"></g>
@@ -45,9 +32,9 @@
         <h2>族譜操作</h2>
         <ul>
           <li>拖曳空白處：平移視圖</li>
+          <li>拖曳節點：調整圖形佈局</li>
           <li>滑鼠滾輪：縮放</li>
           <li>手機可雙指縮放或用上方按鈕放大/縮小</li>
-          <li>Graph 節點固定位置（不可拖曳）</li>
           <li>點擊節點：高亮直系並自動置中</li>
         </ul>
         <p id="focusInfo">目前：顯示全部族譜</p>
@@ -66,4 +53,3 @@
     <script src="./app.js"></script>
   </body>
 </html>
-

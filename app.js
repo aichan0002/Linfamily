@@ -2,10 +2,8 @@
   const stage = document.getElementById("graphStage");
   const svg = document.getElementById("graphSvg");
   const worldLayer = document.getElementById("worldLayer");
-  const columnLayer = document.getElementById("columnLayer");
   const edgeLayer = document.getElementById("edgeLayer");
   const nodeLayer = document.getElementById("nodeLayer");
-  const generationOverlay = document.getElementById("generationOverlay");
 
   const focusInfo = document.getElementById("focusInfo");
   const resetBtn = document.getElementById("resetBtn");
@@ -14,23 +12,12 @@
   const searchInput = document.getElementById("searchInput");
   const searchResults = document.getElementById("searchResults");
 
-  if (
-    !stage ||
-    !svg ||
-    !worldLayer ||
-    !columnLayer ||
-    !edgeLayer ||
-    !nodeLayer ||
-    !generationOverlay
-  ) {
+  if (!stage || !svg || !worldLayer || !edgeLayer || !nodeLayer) {
     return;
   }
 
-  const HEADER_HEIGHT = 0;
-  const COL_GAP = 250;
-  const ROW_GAP = 90;
   const MIN_SCALE = 0.08;
-  const MAX_SCALE = 2.4;
+  const MAX_SCALE = 2.7;
 
   const columns = Array.isArray(window.FAMILY_COLUMNS)
     ? window.FAMILY_COLUMNS.map((column) => ({
@@ -70,7 +57,6 @@
         maxCount = count;
       }
     }
-
     return selectedRoot;
   }
 
@@ -88,22 +74,23 @@
         label,
         notes: new Set(),
         note: "",
-        x: 0,
-        y: null,
-        w: 100,
-        h: 44,
         order: nodeOrder,
         parents: [],
         children: [],
+        x: 0,
+        y: 0,
+        vx: 0,
+        vy: 0,
+        r: 34,
       });
       nodeOrder += 1;
     }
-
     return nodeMap.get(nodeId);
   }
 
   function link(parentId, childId) {
     if (!parentId || !childId || parentId === childId) return;
+
     const edgeKey = `${parentId}->${childId}`;
     if (edgeMap.has(edgeKey)) return;
 
@@ -173,90 +160,97 @@
     } else {
       node.note = `${filteredNotes[0]} 等${filteredNotes.length}位`;
     }
+
+    node.r = Math.max(28, Math.min(48, 24 + Math.ceil(node.label.length * 2.6)));
   }
 
-  function sortChildIds(aId, bId) {
-    const a = nodeMap.get(aId);
-    const b = nodeMap.get(bId);
-    if (!a && !b) return 0;
-    if (!a) return 1;
-    if (!b) return -1;
-    if (a.col !== b.col) return a.col - b.col;
-    return a.order - b.order;
+  function hashText(text) {
+    let hash = 0;
+    for (let i = 0; i < text.length; i += 1) {
+      hash = (hash * 33 + text.charCodeAt(i)) >>> 0;
+    }
+    return hash;
   }
 
-  let leafIndex = 0;
+  function initializeForceLayout() {
+    const count = Math.max(nodes.length, 1);
+    const radius = Math.max(260, Math.sqrt(count) * 80);
 
-  function placeFrom(nodeId, visiting = new Set()) {
-    const node = nodeMap.get(nodeId);
-    if (!node) return 0;
-    if (typeof node.y === "number") return node.y;
-    if (visiting.has(nodeId)) return 0;
-
-    visiting.add(nodeId);
-
-    if (node.children.length === 0) {
-      node.y = leafIndex * ROW_GAP;
-      leafIndex += 1;
-      visiting.delete(nodeId);
-      return node.y;
+    for (let i = 0; i < nodes.length; i += 1) {
+      const node = nodes[i];
+      const angle = (i / count) * Math.PI * 2;
+      const noise = (hashText(node.id) % 1000) / 1000 - 0.5;
+      node.x = Math.cos(angle) * radius + noise * 90;
+      node.y = Math.sin(angle) * radius + noise * 90;
+      node.vx = 0;
+      node.vy = 0;
     }
 
-    const childYs = node.children
-      .slice()
-      .sort(sortChildIds)
-      .map((childId) => placeFrom(childId, visiting));
+    const repulsion = 28000;
+    const spring = 0.014;
+    const idealLength = 165;
+    const centerPull = 0.0024;
+    const damping = 0.86;
+    const iterations = 180;
 
-    node.y = (Math.min(...childYs) + Math.max(...childYs)) / 2;
-    visiting.delete(nodeId);
-    return node.y;
-  }
+    for (let iter = 0; iter < iterations; iter += 1) {
+      for (const node of nodes) {
+        node.fx = 0;
+        node.fy = 0;
+      }
 
-  const roots = nodes
-    .filter((node) => node.parents.length === 0)
-    .sort((a, b) => a.order - b.order);
+      for (let i = 0; i < nodes.length; i += 1) {
+        const a = nodes[i];
+        for (let j = i + 1; j < nodes.length; j += 1) {
+          const b = nodes[j];
+          const dx = b.x - a.x;
+          const dy = b.y - a.y;
+          const dist2 = dx * dx + dy * dy + 0.01;
+          const dist = Math.sqrt(dist2);
+          const force = repulsion / dist2;
+          const fx = (force * dx) / dist;
+          const fy = (force * dy) / dist;
 
-  for (const root of roots) {
-    placeFrom(root.id, new Set());
-  }
+          a.fx -= fx;
+          a.fy -= fy;
+          b.fx += fx;
+          b.fy += fy;
+        }
+      }
 
-  for (const node of nodes) {
-    if (typeof node.y !== "number") {
-      node.y = leafIndex * ROW_GAP;
-      leafIndex += 1;
+      for (const edge of edges) {
+        const sourceNode = nodeMap.get(edge.source);
+        const targetNode = nodeMap.get(edge.target);
+        if (!sourceNode || !targetNode) continue;
+
+        const dx = targetNode.x - sourceNode.x;
+        const dy = targetNode.y - sourceNode.y;
+        const dist = Math.hypot(dx, dy) || 1;
+        const delta = dist - idealLength;
+        const force = spring * delta;
+        const fx = (force * dx) / dist;
+        const fy = (force * dy) / dist;
+
+        sourceNode.fx += fx;
+        sourceNode.fy += fy;
+        targetNode.fx -= fx;
+        targetNode.fy -= fy;
+      }
+
+      for (const node of nodes) {
+        node.fx += -node.x * centerPull;
+        node.fy += -node.y * centerPull;
+
+        node.vx = (node.vx + node.fx) * damping;
+        node.vy = (node.vy + node.fy) * damping;
+
+        node.x += node.vx;
+        node.y += node.vy;
+      }
     }
-    node.x = node.col * COL_GAP;
   }
 
-  if (nodes.length > 0) {
-    const ys = nodes.map((node) => node.y);
-    const middleY = (Math.min(...ys) + Math.max(...ys)) / 2;
-    for (const node of nodes) {
-      node.y -= middleY;
-    }
-  }
-
-  function estimateCharacterWidth(text) {
-    let total = 0;
-    for (const char of text) {
-      const code = char.codePointAt(0) || 0;
-      if (code <= 0x007f) total += 0.56;
-      else if (code <= 0x02ff) total += 0.65;
-      else total += 1.0;
-    }
-    return total;
-  }
-
-  function estimateTextWidth(text, fontSize) {
-    return Math.ceil(estimateCharacterWidth(text) * fontSize);
-  }
-
-  for (const node of nodes) {
-    const nameWidth = estimateTextWidth(node.label, 16) + 34;
-    const noteWidth = node.note ? estimateTextWidth(node.note, 11) + 26 : 0;
-    node.w = Math.max(94, Math.min(220, Math.max(nameWidth, noteWidth)));
-    node.h = node.note ? 64 : 44;
-  }
+  initializeForceLayout();
 
   function createSvgElement(tagName, attrs = {}) {
     const element = document.createElementNS("http://www.w3.org/2000/svg", tagName);
@@ -267,65 +261,35 @@
     return element;
   }
 
-  function buildEdgePath(sourceNode, targetNode) {
-    const sx = sourceNode.x + sourceNode.w / 2;
-    const sy = sourceNode.y;
-    const tx = targetNode.x - targetNode.w / 2;
-    const ty = targetNode.y;
-
-    const curve = Math.max(56, Math.min(180, (tx - sx) * 0.45));
-    return `M ${sx} ${sy} C ${sx + curve} ${sy}, ${tx - curve} ${ty}, ${tx} ${ty}`;
-  }
-
+  const edgeVisuals = [];
   const nodeElements = new Map();
-  const edgeElements = [];
-  const columnLineElements = [];
-  const generationLabels = [];
-
-  for (let col = 0; col < columns.length; col += 1) {
-    const line = createSvgElement("line", {
-      class: "column-guide",
-      x1: col * COL_GAP,
-      x2: col * COL_GAP,
-      y1: -100,
-      y2: 100,
-    });
-    columnLayer.appendChild(line);
-    columnLineElements.push(line);
-
-    const label = document.createElement("div");
-    label.className = "generation-label";
-
-    const generationSpan = document.createElement("span");
-    generationSpan.className = "generation-index";
-    generationSpan.textContent = columns[col].generation || `第${col}世`;
-    label.appendChild(generationSpan);
-
-    if (columns[col].marker) {
-      const markerSpan = document.createElement("span");
-      markerSpan.className = "generation-marker";
-      markerSpan.textContent = columns[col].marker;
-      label.appendChild(markerSpan);
-    }
-
-    generationOverlay.appendChild(label);
-    generationLabels.push(label);
-  }
 
   for (const edge of edges) {
-    const sourceNode = nodeMap.get(edge.source);
-    const targetNode = nodeMap.get(edge.target);
-    if (!sourceNode || !targetNode) continue;
-
-    const path = createSvgElement("path", {
-      class: "graph-edge",
-      d: buildEdgePath(sourceNode, targetNode),
+    const group = createSvgElement("g", { class: "graph-edge" });
+    const line = createSvgElement("path", {
+      class: "graph-edge-line",
+      "data-source": edge.source,
+      "data-target": edge.target,
+    });
+    const arrow = createSvgElement("path", {
+      class: "graph-edge-arrow",
+      d: "M -10 -6 L 0 0 L -10 6",
       "data-source": edge.source,
       "data-target": edge.target,
     });
 
-    edgeLayer.appendChild(path);
-    edgeElements.push(path);
+    group.appendChild(line);
+    group.appendChild(arrow);
+    edgeLayer.appendChild(group);
+
+    edgeVisuals.push({
+      source: edge.source,
+      target: edge.target,
+      group,
+      line,
+      arrow,
+      curveSign: hashText(`${edge.source}|${edge.target}`) % 2 === 0 ? 1 : -1,
+    });
   }
 
   for (const node of nodes) {
@@ -335,30 +299,28 @@
       transform: `translate(${node.x} ${node.y})`,
     });
 
-    const rect = createSvgElement("rect", {
-      x: -node.w / 2,
-      y: -node.h / 2,
-      width: node.w,
-      height: node.h,
-      rx: 12,
-      ry: 12,
+    const circle = createSvgElement("circle", {
+      class: "node-core",
+      cx: 0,
+      cy: 0,
+      r: node.r,
     });
 
     const nameText = createSvgElement("text", {
       class: "name",
       x: 0,
-      y: node.note ? -8 : 5,
+      y: 1,
     });
     nameText.textContent = node.label;
 
-    group.appendChild(rect);
+    group.appendChild(circle);
     group.appendChild(nameText);
 
     if (node.note) {
       const noteText = createSvgElement("text", {
         class: "note",
         x: 0,
-        y: 15,
+        y: node.r + 15,
       });
       noteText.textContent = node.note;
       group.appendChild(noteText);
@@ -366,6 +328,20 @@
 
     nodeLayer.appendChild(group);
     nodeElements.set(node.id, group);
+  }
+
+  let focusedId = null;
+  let viewportAnimFrame = null;
+  let edgeGeometryDirty = true;
+
+  const viewport = {
+    x: 0,
+    y: 0,
+    scale: 1,
+  };
+
+  function clampScale(scale) {
+    return Math.max(MIN_SCALE, Math.min(MAX_SCALE, scale));
   }
 
   function getPrimaryParentLabel(node) {
@@ -415,10 +391,10 @@
       return { minX: -120, maxX: 120, minY: -120, maxY: 120, w: 240, h: 240 };
     }
 
-    const minX = Math.min(...nodes.map((node) => node.x - node.w / 2)) - 120;
-    const maxX = Math.max(...nodes.map((node) => node.x + node.w / 2)) + 140;
-    const minY = Math.min(...nodes.map((node) => node.y - node.h / 2)) - 120;
-    const maxY = Math.max(...nodes.map((node) => node.y + node.h / 2)) + 120;
+    const minX = Math.min(...nodes.map((node) => node.x - node.r)) - 120;
+    const maxX = Math.max(...nodes.map((node) => node.x + node.r)) + 120;
+    const minY = Math.min(...nodes.map((node) => node.y - node.r)) - 120;
+    const maxY = Math.max(...nodes.map((node) => node.y + node.r + (node.note ? 18 : 0))) + 120;
 
     return {
       minX,
@@ -430,49 +406,8 @@
     };
   }
 
-  const viewport = {
-    x: 0,
-    y: 0,
-    scale: 1,
-  };
-
-  let focusedId = null;
-  let viewportAnimFrame = null;
-
-  function clampScale(scale) {
-    return Math.max(MIN_SCALE, Math.min(MAX_SCALE, scale));
-  }
-
   function applyViewportTransform() {
     worldLayer.setAttribute("transform", `translate(${viewport.x} ${viewport.y}) scale(${viewport.scale})`);
-  }
-
-  function updateColumnAndHeaderPositions() {
-    const topWorld = (HEADER_HEIGHT - viewport.y) / viewport.scale;
-    const bottomWorld = topWorld + stage.clientHeight / viewport.scale + 120;
-
-    for (let col = 0; col < columnLineElements.length; col += 1) {
-      const x = col * COL_GAP;
-      const line = columnLineElements[col];
-      line.setAttribute("x1", String(x));
-      line.setAttribute("x2", String(x));
-      line.setAttribute("y1", String(topWorld));
-      line.setAttribute("y2", String(bottomWorld));
-    }
-
-    const width = stage.clientWidth;
-    for (let col = 0; col < generationLabels.length; col += 1) {
-      const screenX = col * COL_GAP * viewport.scale + viewport.x;
-      const label = generationLabels[col];
-
-      if (screenX < -130 || screenX > width + 130) {
-        label.style.display = "none";
-        continue;
-      }
-
-      label.style.display = "flex";
-      label.style.left = `${screenX}px`;
-    }
   }
 
   function updateFocusInfo() {
@@ -498,25 +433,76 @@
     for (const node of nodes) {
       const element = nodeElements.get(node.id);
       if (!element) continue;
-
       const active = !focusSet || focusSet.has(node.id);
       const isFocused = focusedId === node.id;
-
       element.classList.toggle("inactive", !active);
       element.classList.toggle("focused", isFocused);
     }
 
-    for (const edgePath of edgeElements) {
-      const sourceId = edgePath.getAttribute("data-source") || "";
-      const targetId = edgePath.getAttribute("data-target") || "";
-      const active = !focusSet || (focusSet.has(sourceId) && focusSet.has(targetId));
-      edgePath.classList.toggle("inactive", !active);
+    for (const edgeVisual of edgeVisuals) {
+      const active =
+        !focusSet ||
+        (focusSet.has(edgeVisual.source) && focusSet.has(edgeVisual.target));
+      edgeVisual.group.classList.toggle("inactive", !active);
     }
   }
 
+  function edgeEndpoints(sourceNode, targetNode) {
+    const dx = targetNode.x - sourceNode.x;
+    const dy = targetNode.y - sourceNode.y;
+    const dist = Math.hypot(dx, dy) || 1;
+    const ux = dx / dist;
+    const uy = dy / dist;
+
+    const startX = sourceNode.x + ux * (sourceNode.r + 1);
+    const startY = sourceNode.y + uy * (sourceNode.r + 1);
+    const endX = targetNode.x - ux * (targetNode.r + 12);
+    const endY = targetNode.y - uy * (targetNode.r + 12);
+
+    return { startX, startY, endX, endY, dist, ux, uy };
+  }
+
+  function updateEdgeGeometry(edgeVisual) {
+    const sourceNode = nodeMap.get(edgeVisual.source);
+    const targetNode = nodeMap.get(edgeVisual.target);
+    if (!sourceNode || !targetNode) return;
+
+    const points = edgeEndpoints(sourceNode, targetNode);
+    const perpX = -points.uy;
+    const perpY = points.ux;
+    const curveAmount = Math.max(10, Math.min(42, points.dist * 0.14)) * edgeVisual.curveSign;
+
+    const ctrlX = (points.startX + points.endX) / 2 + perpX * curveAmount;
+    const ctrlY = (points.startY + points.endY) / 2 + perpY * curveAmount;
+
+    const pathData = `M ${points.startX} ${points.startY} Q ${ctrlX} ${ctrlY} ${points.endX} ${points.endY}`;
+    edgeVisual.line.setAttribute("d", pathData);
+
+    const tanX = points.endX - ctrlX;
+    const tanY = points.endY - ctrlY;
+    const angleDeg = (Math.atan2(tanY, tanX) * 180) / Math.PI;
+    edgeVisual.arrow.setAttribute("transform", `translate(${points.endX} ${points.endY}) rotate(${angleDeg})`);
+  }
+
+  function refreshGeometry() {
+    for (const node of nodes) {
+      const element = nodeElements.get(node.id);
+      if (!element) continue;
+      element.setAttribute("transform", `translate(${node.x} ${node.y})`);
+    }
+
+    for (const edgeVisual of edgeVisuals) {
+      updateEdgeGeometry(edgeVisual);
+    }
+
+    edgeGeometryDirty = false;
+  }
+
   function render() {
+    if (edgeGeometryDirty) {
+      refreshGeometry();
+    }
     applyViewportTransform();
-    updateColumnAndHeaderPositions();
     updateFocusClasses();
   }
 
@@ -557,7 +543,7 @@
     const stageWidth = stage.clientWidth;
     const stageHeight = stage.clientHeight;
     const drawableWidth = Math.max(40, stageWidth - 72);
-    const drawableHeight = Math.max(40, stageHeight - HEADER_HEIGHT - 36);
+    const drawableHeight = Math.max(40, stageHeight - 36);
 
     const scaleX = drawableWidth / bounds.w;
     const scaleY = drawableHeight / bounds.h;
@@ -567,11 +553,8 @@
     const worldCenterX = (bounds.minX + bounds.maxX) / 2;
     const worldCenterY = (bounds.minY + bounds.maxY) / 2;
 
-    const screenCenterX = stageWidth / 2;
-    const screenCenterY = HEADER_HEIGHT + drawableHeight / 2;
-
-    viewport.x = screenCenterX - worldCenterX * viewport.scale;
-    viewport.y = screenCenterY - worldCenterY * viewport.scale;
+    viewport.x = stageWidth / 2 - worldCenterX * viewport.scale;
+    viewport.y = stageHeight / 2 - worldCenterY * viewport.scale;
 
     focusedId = null;
     updateFocusInfo();
@@ -586,7 +569,7 @@
     focusedId = nodeId;
 
     if (recenter) {
-      const targetScale = zoomOnCenter ? Math.max(viewport.scale, 0.62) : viewport.scale;
+      const targetScale = zoomOnCenter ? Math.max(viewport.scale, 0.7) : viewport.scale;
       const targetX = stage.clientWidth / 2 - node.x * targetScale;
       const targetY = stage.clientHeight / 2 - node.y * targetScale;
       updateFocusInfo();
@@ -693,9 +676,23 @@
   let isPanning = false;
   let panAnchor = null;
   let pinchState = null;
+  let dragNodeId = null;
+  let dragOffsetWorld = { x: 0, y: 0 };
+  let movedSinceDown = false;
 
   function pointerDistance(a, b) {
     return Math.hypot(a.x - b.x, a.y - b.y);
+  }
+
+  function clearInteractionFlags() {
+    pointerStart = null;
+    pressedNodeId = null;
+    pressedBlank = false;
+    isPanning = false;
+    panAnchor = null;
+    dragNodeId = null;
+    movedSinceDown = false;
+    svg.classList.remove("is-panning");
   }
 
   function startPinchIfReady() {
@@ -715,11 +712,7 @@
       startWorld: localToWorld(centerLocal.x, centerLocal.y),
     };
 
-    pressedNodeId = null;
-    pressedBlank = false;
-    isPanning = false;
-    panAnchor = null;
-    svg.classList.remove("is-panning");
+    clearInteractionFlags();
   }
 
   svg.addEventListener("pointerdown", (event) => {
@@ -727,24 +720,38 @@
     svg.setPointerCapture(event.pointerId);
 
     pointerStart = { x: event.clientX, y: event.clientY };
+    movedSinceDown = false;
+
     startPinchIfReady();
     if (pinchState) return;
 
     const nodeElement = event.target.closest(".graph-node");
+    const local = clientToLocal(event.clientX, event.clientY);
 
     if (nodeElement) {
-      pressedNodeId = nodeElement.getAttribute("data-id");
+      const nodeId = nodeElement.getAttribute("data-id") || "";
+      const node = nodeMap.get(nodeId);
+      if (!node) return;
+
+      pressedNodeId = nodeId;
+      dragNodeId = nodeId;
       pressedBlank = false;
       isPanning = false;
       panAnchor = null;
+
+      const worldPoint = localToWorld(local.x, local.y);
+      dragOffsetWorld = {
+        x: worldPoint.x - node.x,
+        y: worldPoint.y - node.y,
+      };
+
       return;
     }
 
     pressedNodeId = null;
+    dragNodeId = null;
     pressedBlank = true;
     isPanning = true;
-
-    const local = clientToLocal(event.clientX, event.clientY);
     panAnchor = {
       x: local.x - viewport.x,
       y: local.y - viewport.y,
@@ -775,6 +782,30 @@
       return;
     }
 
+    if (dragNodeId) {
+      const movedDistance = pointerStart
+        ? Math.hypot(event.clientX - pointerStart.x, event.clientY - pointerStart.y)
+        : 0;
+      if (movedDistance > 4) {
+        movedSinceDown = true;
+      }
+
+      if (movedSinceDown) {
+        const node = nodeMap.get(dragNodeId);
+        if (!node) return;
+
+        const local = clientToLocal(event.clientX, event.clientY);
+        const worldPoint = localToWorld(local.x, local.y);
+
+        node.x = worldPoint.x - dragOffsetWorld.x;
+        node.y = worldPoint.y - dragOffsetWorld.y;
+
+        edgeGeometryDirty = true;
+        render();
+      }
+      return;
+    }
+
     if (isPanning && panAnchor) {
       const local = clientToLocal(event.clientX, event.clientY);
       viewport.x = local.x - panAnchor.x;
@@ -783,26 +814,19 @@
     }
   });
 
-  function clearPointerInteraction() {
-    pointerStart = null;
-    pressedNodeId = null;
-    pressedBlank = false;
-    isPanning = false;
-    panAnchor = null;
-    svg.classList.remove("is-panning");
-  }
-
   svg.addEventListener("pointerup", (event) => {
     activePointers.delete(event.pointerId);
 
     if (pinchState && activePointers.size < 2) {
       pinchState = null;
-      clearPointerInteraction();
+      clearInteractionFlags();
       return;
     }
 
-    const moved =
-      pointerStart && Math.hypot(event.clientX - pointerStart.x, event.clientY - pointerStart.y) > 6;
+    const movedDistance = pointerStart
+      ? Math.hypot(event.clientX - pointerStart.x, event.clientY - pointerStart.y)
+      : 0;
+    const moved = movedSinceDown || movedDistance > 6;
 
     if (!moved && pressedNodeId) {
       focusNodeById(pressedNodeId, { recenter: true, zoomOnCenter: false });
@@ -812,13 +836,15 @@
       render();
     }
 
-    clearPointerInteraction();
+    clearInteractionFlags();
   });
 
   svg.addEventListener("pointercancel", (event) => {
     activePointers.delete(event.pointerId);
-    if (activePointers.size < 2) pinchState = null;
-    clearPointerInteraction();
+    if (activePointers.size < 2) {
+      pinchState = null;
+    }
+    clearInteractionFlags();
   });
 
   svg.addEventListener(
@@ -870,5 +896,3 @@
   fitView();
   renderSearchResults("");
 })();
-
-
