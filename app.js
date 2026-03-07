@@ -16,7 +16,7 @@
   const autoZoomToggle = document.getElementById("autoZoomToggle");
   const fullCollapseToggle = document.getElementById("fullCollapseToggle");
 
-  const APP_VERSION = "v2026.03.07-28";
+  const APP_VERSION = "v2026.03.07-29";
 
   if (versionBadge) {
     versionBadge.textContent = `版本 ${APP_VERSION}`;
@@ -1543,9 +1543,9 @@
     }
 
     const pos = new Map();
-    const unitX = 154;
-    const unitY = 156;
-    const siblingGapUnits = 1.06;
+    const unitX = 118;
+    const unitY = 196;
+    const siblingGapUnits = 0.72;
 
     let centerAxisIndex = axisOrdered.indexOf(centerId);
     if (centerAxisIndex < 0) centerAxisIndex = Math.floor(axisOrdered.length / 2);
@@ -1559,17 +1559,19 @@
     const widthMemo = new Map();
     const subtreeWidth = (nodeId) => {
       if (widthMemo.has(nodeId)) return widthMemo.get(nodeId);
+      const selfNode = nodeById(nodeId);
+      const selfUnits = Math.max(1, ((selfNode?.size || 72) + 22) / unitX);
       const kids = (childrenByNode.get(nodeId) || []).filter((cid) => !axisSet.has(cid));
       if (kids.length === 0) {
-        widthMemo.set(nodeId, 1);
-        return 1;
+        widthMemo.set(nodeId, selfUnits);
+        return selfUnits;
       }
       let total = 0;
       for (let i = 0; i < kids.length; i += 1) {
         total += subtreeWidth(kids[i]);
         if (i < kids.length - 1) total += siblingGapUnits;
       }
-      total = Math.max(1, total);
+      total = Math.max(selfUnits, total);
       widthMemo.set(nodeId, total);
       return total;
     };
@@ -1643,7 +1645,7 @@
           if (i < widths.length - 1) total += siblingGapUnits;
         }
 
-        const sideGap = unitX * 1.12;
+        const sideGap = unitX * 0.76;
         let cursor = side === "left"
           ? axisPos.x - sideGap - total * unitX
           : axisPos.x + sideGap;
@@ -1661,7 +1663,7 @@
       placeAxisSide(rightChildren, "right");
     }
 
-    const axisClearance = unitX * 0.84;
+    const axisClearance = unitX * 0.68;
     for (const [nodeId, p] of pos.entries()) {
       if (axisSet.has(nodeId)) continue;
       if (Math.abs(p.x) >= axisClearance) continue;
@@ -1672,13 +1674,81 @@
       p.x = dir * axisClearance;
     }
 
-    let spillX = unitX * 4;
+    const rowMap = new Map();
+    for (const [nodeId, p] of pos.entries()) {
+      const rowKey = Math.round(p.y);
+      if (!rowMap.has(rowKey)) rowMap.set(rowKey, []);
+      rowMap.get(rowKey).push(nodeId);
+    }
+
+    const rowPadding = 14;
+    for (const rowNodeIds of rowMap.values()) {
+      const entries = rowNodeIds
+        .map((id) => {
+          const n = nodeById(id);
+          const point = pos.get(id);
+          if (!n || !point) return null;
+          return {
+            id,
+            x: point.x,
+            size: n.size || 72,
+            axis: axisSet.has(id),
+          };
+        })
+        .filter((entry) => Boolean(entry));
+      if (entries.length <= 1) continue;
+
+      const axisEntries = entries.filter((e) => e.axis);
+      const axisX = axisEntries.length > 0
+        ? axisEntries.reduce((sum, e) => sum + e.x, 0) / axisEntries.length
+        : 0;
+
+      const left = entries.filter((e) => !e.axis && e.x < axisX).sort((a, b) => b.x - a.x);
+      const right = entries.filter((e) => !e.axis && e.x >= axisX).sort((a, b) => a.x - b.x);
+
+      let prevLeftX = axisX;
+      let prevLeftSize = 0;
+      for (let i = 0; i < left.length; i += 1) {
+        const e = left[i];
+        const minDist = i === 0
+          ? Math.max(axisClearance, e.size * 0.62 + rowPadding)
+          : (prevLeftSize + e.size) / 2 + rowPadding;
+        const maxX = prevLeftX - minDist;
+        if (e.x > maxX) e.x = maxX;
+        prevLeftX = e.x;
+        prevLeftSize = e.size;
+      }
+
+      let prevRightX = axisX;
+      let prevRightSize = 0;
+      for (let i = 0; i < right.length; i += 1) {
+        const e = right[i];
+        const minDist = i === 0
+          ? Math.max(axisClearance, e.size * 0.62 + rowPadding)
+          : (prevRightSize + e.size) / 2 + rowPadding;
+        const minX = prevRightX + minDist;
+        if (e.x < minX) e.x = minX;
+        prevRightX = e.x;
+        prevRightSize = e.size;
+      }
+
+      for (const e of left) {
+        const point = pos.get(e.id);
+        if (point) point.x = e.x;
+      }
+      for (const e of right) {
+        const point = pos.get(e.id);
+        if (point) point.x = e.x;
+      }
+    }
+
+    let spillX = unitX * 3.2;
     for (const nodeId of visibleNodes) {
       if (pos.has(nodeId)) continue;
       const node = nodeById(nodeId);
       const y = node ? (node.col - (nodeById(centerId)?.col || 0)) * unitY : 0;
       placeBranch(nodeId, spillX, y);
-      spillX += unitX * 2.2;
+      spillX += unitX * 1.9;
     }
 
     const plain = {};
@@ -2213,4 +2283,5 @@
   renderSearchResults("");
   setViewMode("family", { animate: false });
 })();
+
 
