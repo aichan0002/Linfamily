@@ -16,7 +16,7 @@
   const autoZoomToggle = document.getElementById("autoZoomToggle");
   const fullCollapseToggle = document.getElementById("fullCollapseToggle");
 
-  const APP_VERSION = "v2026.03.07-19";
+  const APP_VERSION = "v2026.03.07-21";
 
   if (versionBadge) {
     versionBadge.textContent = `版本 ${APP_VERSION}`;
@@ -234,6 +234,59 @@
 
   const cyElements = [];
 
+  function buildEdgeRouteMap() {
+    const sourceChildIndexMap = new Map();
+    for (const node of nodes) {
+      const sortedChildren = node.children
+        .map((childId) => nodeById(childId))
+        .filter((child) => Boolean(child))
+        .sort((a, b) => a.col - b.col || a.order - b.order);
+      const indexByChild = new Map();
+      sortedChildren.forEach((childNode, idx) => {
+        indexByChild.set(childNode.id, idx);
+      });
+      sourceChildIndexMap.set(node.id, {
+        count: sortedChildren.length,
+        indexByChild,
+      });
+    }
+    const targetParentIndexMap = new Map();
+    for (const node of nodes) {
+      const sortedParents = node.parents
+        .map((parentId) => nodeById(parentId))
+        .filter((parent) => Boolean(parent))
+        .sort((a, b) => a.col - b.col || a.order - b.order);
+      const indexByParent = new Map();
+      sortedParents.forEach((parentNode, idx) => {
+        indexByParent.set(parentNode.id, idx);
+      });
+      targetParentIndexMap.set(node.id, {
+        count: sortedParents.length,
+        indexByParent,
+      });
+    }
+    const edgeLaneMap = new Map();
+    for (const edge of edges) {
+      const srcRoute = sourceChildIndexMap.get(edge.source);
+      const srcCount = srcRoute ? srcRoute.count : 1;
+      const srcIdx = srcRoute ? (srcRoute.indexByChild.get(edge.target) ?? 0) : 0;
+      const srcCenter = (srcCount - 1) / 2;
+      const srcLane = srcIdx - srcCenter;
+      const tgtRoute = targetParentIndexMap.get(edge.target);
+      const tgtCount = tgtRoute ? tgtRoute.count : 1;
+      const tgtIdx = tgtRoute ? (tgtRoute.indexByParent.get(edge.source) ?? 0) : 0;
+      const tgtCenter = (tgtCount - 1) / 2;
+      const tgtLane = tgtIdx - tgtCenter;
+      let lane = srcLane + tgtLane * 0.65;
+      if (Math.abs(lane) < 0.05 && (srcCount > 1 || tgtCount > 1)) {
+        lane = srcLane !== 0 ? srcLane : tgtLane;
+      }
+      edgeLaneMap.set(`${edge.source}->${edge.target}`, lane);
+    }
+    return { sourceChildIndexMap, targetParentIndexMap, edgeLaneMap };
+  }
+  const edgeRouteMap = buildEdgeRouteMap();
+
   for (const node of nodes) {
     const tone = toneForCol(node.col);
     cyElements.push({
@@ -258,6 +311,10 @@
     const generationCol = sourceNode && targetNode ? Math.min(sourceNode.col, targetNode.col) : 0;
     const edgeTone = edgeToneForGeneration(generationCol);
 
+    const baseLane = edgeRouteMap.edgeLaneMap.get(`${edge.source}->${edge.target}`) || 0;
+    let routeOffset = Math.round(baseLane * 24);
+    routeOffset = Math.max(-180, Math.min(180, routeOffset));
+
     cyElements.push({
       group: "edges",
       data: {
@@ -269,6 +326,8 @@
         arrowColor: edgeTone.arrow,
         lineColorActive: edgeTone.activeLine,
         arrowColorActive: edgeTone.activeArrow,
+        cpDistances: `${routeOffset} ${routeOffset}`,
+        cpWeights: "0.28 0.72",
       },
     });
   }
@@ -326,7 +385,11 @@
         selector: "edge",
         style: {
           width: 2,
-          "curve-style": "bezier",
+          "curve-style": "unbundled-bezier",
+          "control-point-distances": "data(cpDistances)",
+          "control-point-weights": "data(cpWeights)",
+          "source-endpoint": "outside-to-node",
+          "target-endpoint": "outside-to-node",
           "line-color": "data(lineColor)",
           "target-arrow-color": "data(arrowColor)",
           "target-arrow-shape": "vee",
@@ -906,6 +969,153 @@
       }
     }
   }
+  function updateVisibleEdgeCurves(nodeIdSet, edgeIdSet, primaryLineIds) {
+    const visibleNodes = nodeIdSet || new Set();
+    const visibleEdges = edgeIdSet || new Set();
+    const primarySet = primaryLineIds || new Set();
+    const laneByEdge = new Map();
+    const edgeEles = [];
+    for (const edgeId of visibleEdges) {
+      const edgeEle = cy.getElementById(edgeId);
+      if (!edgeEle || edgeEle.length === 0) continue;
+      edgeEles.push(edgeEle);
+      const baseLane = edgeRouteMap.edgeLaneMap.get(edgeId) || 0;
+      laneByEdge.set(edgeId, baseLane * 0.45);
+    }
+    const outgoingBySource = new Map();
+    for (const edgeEle of edgeEles) {
+      const sourceId = edgeEle.data("source");
+      if (!visibleNodes.has(sourceId)) continue;
+      if (!outgoingBySource.has(sourceId)) outgoingBySource.set(sourceId, []);
+      outgoingBySource.get(sourceId).push(edgeEle);
+    }
+    for (const [sourceId, sourceEdges] of outgoingBySource.entries()) {
+      if (sourceEdges.length <= 1) continue;
+      const sourceEle = cy.getElementById(sourceId);
+      if (!sourceEle || sourceEle.length === 0) continue;
+      const sourceX = sourceEle.position("x");
+      const trunkEdge = sourceEdges.find((edgeEle) => {
+        const targetId = edgeEle.data("target");
+        return primarySet.has(sourceId) && primarySet.has(targetId);
+      });
+      const others = sourceEdges.filter((edgeEle) => edgeEle.id() !== trunkEdge?.id());
+      const left = [];
+      const right = [];
+      for (const edgeEle of others) {
+        const targetId = edgeEle.data("target");
+        const targetEle = cy.getElementById(targetId);
+        if (!targetEle || targetEle.length === 0) continue;
+        if (targetEle.position("x") >= sourceX) {
+          right.push(edgeEle);
+        } else {
+          left.push(edgeEle);
+        }
+      }
+      left.sort((a, b) => {
+        const ay = cy.getElementById(a.data("target")).position("y");
+        const by = cy.getElementById(b.data("target")).position("y");
+        return ay - by;
+      });
+      right.sort((a, b) => {
+        const ay = cy.getElementById(a.data("target")).position("y");
+        const by = cy.getElementById(b.data("target")).position("y");
+        return ay - by;
+      });
+      left.forEach((edgeEle, idx) => {
+        laneByEdge.set(edgeEle.id(), (laneByEdge.get(edgeEle.id()) || 0) - (idx + 1));
+      });
+      right.forEach((edgeEle, idx) => {
+        laneByEdge.set(edgeEle.id(), (laneByEdge.get(edgeEle.id()) || 0) + (idx + 1));
+      });
+      if (trunkEdge) {
+        laneByEdge.set(trunkEdge.id(), 0);
+      }
+    }
+    const incomingByTarget = new Map();
+    for (const edgeEle of edgeEles) {
+      const targetId = edgeEle.data("target");
+      if (!visibleNodes.has(targetId)) continue;
+      if (!incomingByTarget.has(targetId)) incomingByTarget.set(targetId, []);
+      incomingByTarget.get(targetId).push(edgeEle);
+    }
+    for (const [targetId, targetEdges] of incomingByTarget.entries()) {
+      if (targetEdges.length <= 1) continue;
+      const targetEle = cy.getElementById(targetId);
+      if (!targetEle || targetEle.length === 0) continue;
+      const targetX = targetEle.position("x");
+      const trunkEdge = targetEdges.find((edgeEle) => {
+        const sourceId = edgeEle.data("source");
+        return primarySet.has(sourceId) && primarySet.has(targetId);
+      });
+      const others = targetEdges.filter((edgeEle) => edgeEle.id() !== trunkEdge?.id());
+      const left = [];
+      const right = [];
+      for (const edgeEle of others) {
+        const sourceId = edgeEle.data("source");
+        const sourceEle = cy.getElementById(sourceId);
+        if (!sourceEle || sourceEle.length === 0) continue;
+        if (sourceEle.position("x") <= targetX) {
+          left.push(edgeEle);
+        } else {
+          right.push(edgeEle);
+        }
+      }
+      left.sort((a, b) => {
+        const ay = cy.getElementById(a.data("source")).position("y");
+        const by = cy.getElementById(b.data("source")).position("y");
+        return ay - by;
+      });
+      right.sort((a, b) => {
+        const ay = cy.getElementById(a.data("source")).position("y");
+        const by = cy.getElementById(b.data("source")).position("y");
+        return ay - by;
+      });
+      left.forEach((edgeEle, idx) => {
+        laneByEdge.set(edgeEle.id(), (laneByEdge.get(edgeEle.id()) || 0) - (idx + 1) * 0.7);
+      });
+      right.forEach((edgeEle, idx) => {
+        laneByEdge.set(edgeEle.id(), (laneByEdge.get(edgeEle.id()) || 0) + (idx + 1) * 0.7);
+      });
+      if (trunkEdge) {
+        laneByEdge.set(trunkEdge.id(), 0);
+      }
+    }
+    for (const edgeEle of edgeEles) {
+      const edgeId = edgeEle.id();
+      const sourceId = edgeEle.data("source");
+      const targetId = edgeEle.data("target");
+      const isPrimary = primarySet.has(sourceId) && primarySet.has(targetId);
+      let lane = isPrimary ? 0 : (laneByEdge.get(edgeId) || 0);
+      if (!isPrimary && Math.abs(lane) < 0.45) {
+        lane = lane >= 0 ? 0.45 : -0.45;
+      }
+      const sourceEle = cy.getElementById(sourceId);
+      const targetEle = cy.getElementById(targetId);
+      let maxDistance = 180;
+      if (sourceEle && sourceEle.length > 0 && targetEle && targetEle.length > 0) {
+        const dx = targetEle.position("x") - sourceEle.position("x");
+        const dy = targetEle.position("y") - sourceEle.position("y");
+        const length = Math.hypot(dx, dy);
+        maxDistance = Math.max(36, Math.min(220, length * 0.46));
+      }
+      const curveDistance = Math.max(-maxDistance, Math.min(maxDistance, lane * 28));
+      const rounded = Math.round(curveDistance * 10) / 10;
+      edgeEle.data("cpDistances", `${rounded} ${rounded}`);
+    }
+  }
+  let edgeCurveTimer = null;
+  function scheduleVisibleEdgeCurveRefresh(nodeIdSet, edgeIdSet, primaryLineIds, delay) {
+    if (edgeCurveTimer) {
+      clearTimeout(edgeCurveTimer);
+      edgeCurveTimer = null;
+    }
+    const waitMs = typeof delay === "number" ? delay : 0;
+    edgeCurveTimer = window.setTimeout(() => {
+      updateVisibleEdgeCurves(nodeIdSet, edgeIdSet, primaryLineIds);
+      edgeCurveTimer = null;
+    }, waitMs);
+  }
+
   function topRootsInSet(idSet) {
     const roots = [];
 
@@ -1065,6 +1275,10 @@
       }
       separateCoincidentNodes(nodeIdSet, lockedLineIds, animate);
       resolveNodeCollisions(nodeIdSet, lockedLineIds, animate);
+      updateVisibleEdgeCurves(nodeIdSet, edgeIdSet, lockedLineIds);
+      if (animate) {
+        scheduleVisibleEdgeCurveRefresh(nodeIdSet, edgeIdSet, lockedLineIds, 260);
+      }
 
       const visibleEles = nodeCollection.union(edgeCollection);
       if (autoFit) {
@@ -1474,4 +1688,6 @@
   renderSearchResults("");
   setViewMode("family", { animate: false });
 })();
+
+
 
