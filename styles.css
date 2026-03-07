@@ -186,6 +186,13 @@ body {
 .side-branch-toggle input {
   accent-color: #67efc5;
 }
+
+.layout-switch {
+  margin-top: 8px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
 .search-block {
   margin: 0;
   border-top: 1px solid var(--line);
@@ -331,4 +338,5 @@ body {
     padding: 12px;
   }
 }
+
 

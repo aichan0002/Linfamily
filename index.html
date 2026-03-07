@@ -28,7 +28,7 @@
         <h2>族譜操作</h2>
         <ul>
           <li>預設為家系模式：上下各顯示 3 代</li>
-          <li>點擊節點：以該人為中心重排樹狀</li>
+          <li>點擊節點：以該人為中心重排（樹狀/放射）</li>
           <li>旁系預設收合，可手動展開</li>
           <li>拖曳空白處平移，滾輪或雙指縮放</li>
           <li>可切換全圖模式做整體探索</li>
@@ -45,6 +45,10 @@
             <input id="sideBranchToggle" type="checkbox" />
             展開旁系分支
           </label>
+          <div class="layout-switch" aria-label="家系布局樣式">
+            <button id="familyTreeBtn" class="mode-btn is-active" type="button">樹狀</button>
+            <button id="familyRadialBtn" class="mode-btn" type="button">放射</button>
+          </div>
         </section>
 
         <section class="search-block" aria-labelledby="searchTitle">
@@ -62,3 +66,5 @@
     <script src="./app.js"></script>
   </body>
 </html>
+
+

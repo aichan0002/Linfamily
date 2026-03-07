@@ -11,8 +11,10 @@
   const familyModeBtn = document.getElementById("familyModeBtn");
   const fullModeBtn = document.getElementById("fullModeBtn");
   const sideBranchToggle = document.getElementById("sideBranchToggle");
+  const familyTreeBtn = document.getElementById("familyTreeBtn");
+  const familyRadialBtn = document.getElementById("familyRadialBtn");
 
-  const APP_VERSION = "v2026.03.07-11";
+  const APP_VERSION = "v2026.03.07-12";
 
   if (versionBadge) {
     versionBadge.textContent = `版本 ${APP_VERSION}`;
@@ -502,6 +504,31 @@
     };
   }
 
+  function distanceMapFromCenter(centerId, allowedNodeIds) {
+    const distMap = new Map();
+    if (!centerId || !allowedNodeIds || !allowedNodeIds.has(centerId)) {
+      return distMap;
+    }
+
+    const queue = [centerId];
+    distMap.set(centerId, 0);
+
+    while (queue.length > 0) {
+      const currentId = queue.shift();
+      const currentDist = distMap.get(currentId) || 0;
+      const neighbors = neighborMap.get(currentId);
+      if (!neighbors) continue;
+
+      for (const nextId of neighbors) {
+        if (!allowedNodeIds.has(nextId)) continue;
+        if (distMap.has(nextId)) continue;
+        distMap.set(nextId, currentDist + 1);
+        queue.push(nextId);
+      }
+    }
+
+    return distMap;
+  }
   function topRootsInSet(idSet) {
     const roots = [];
 
@@ -581,7 +608,12 @@
     });
   }
 
-  function runLayoutForNodeSet(nodeIdSet, edgeIdSet, animate, fitPadding, onDone) {
+  function runLayoutForNodeSet(nodeIdSet, edgeIdSet, animate, fitPadding, layoutOptions, onDone) {
+    const options = layoutOptions || {};
+    const layoutType = options.layoutType || "tree";
+    const centerId = options.centerId || null;
+    const lineageSet = options.lineageSet || new Set();
+
     const nodeCollection = collectionFromIds(nodeIdSet);
     const edgeCollection = edgeCollectionFromIds(edgeIdSet || []);
     const layoutCollection = nodeCollection.union(edgeCollection);
@@ -591,23 +623,52 @@
       return;
     }
 
-    const roots = collectionFromIds(topRootsInSet(nodeIdSet));
+    let layout = null;
 
-    const layout = layoutCollection.layout({
-      name: "breadthfirst",
-      directed: true,
-      roots,
-      padding: 70,
-      spacingFactor: 1.08,
-      avoidOverlap: true,
-      animate,
-      animationDuration: animate ? 480 : 0,
-      sort: (a, b) => {
-        const colDelta = a.data("col") - b.data("col");
-        if (colDelta !== 0) return colDelta;
-        return a.data("order") - b.data("order");
-      },
-    });
+    if (layoutType === "radial") {
+      const distMap = distanceMapFromCenter(centerId, nodeIdSet);
+
+      layout = layoutCollection.layout({
+        name: "concentric",
+        fit: false,
+        animate,
+        animationDuration: animate ? 520 : 0,
+        padding: 70,
+        spacingFactor: 1.16,
+        avoidOverlap: true,
+        minNodeSpacing: 16,
+        startAngle: -Math.PI / 2,
+        clockwise: true,
+        sweep: Math.PI * 2,
+        concentric: (ele) => {
+          const id = ele.id();
+          const dist = distMap.has(id) ? distMap.get(id) : 99;
+          const node = nodeById(id);
+          const degree = node ? node.parents.length + node.children.length : 0;
+          const lineageBoost = lineageSet.has(id) ? 4 : 0;
+          return 120 - dist * 16 + lineageBoost + Math.min(4, degree * 0.4);
+        },
+        levelWidth: () => 16,
+        sort: (a, b) => a.data("order") - b.data("order"),
+      });
+    } else {
+      const roots = collectionFromIds(topRootsInSet(nodeIdSet));
+      layout = layoutCollection.layout({
+        name: "breadthfirst",
+        directed: true,
+        roots,
+        padding: 70,
+        spacingFactor: 1.08,
+        avoidOverlap: true,
+        animate,
+        animationDuration: animate ? 480 : 0,
+        sort: (a, b) => {
+          const colDelta = a.data("col") - b.data("col");
+          if (colDelta !== 0) return colDelta;
+          return a.data("order") - b.data("order");
+        },
+      });
+    }
 
     layout.on("layoutstop", () => {
       const visibleEles = nodeCollection.union(edgeCollection);
@@ -639,6 +700,14 @@
       sideBranchToggle.checked = includeSideBranches;
       sideBranchToggle.disabled = viewMode !== "family";
     }
+    if (familyTreeBtn) {
+      familyTreeBtn.classList.toggle("is-active", familyLayoutStyle === "tree");
+      familyTreeBtn.disabled = viewMode !== "family";
+    }
+    if (familyRadialBtn) {
+      familyRadialBtn.classList.toggle("is-active", familyLayoutStyle === "radial");
+      familyRadialBtn.disabled = viewMode !== "family";
+    }
   }
 
   function updateFocusInfo(lineageCount, visibleCount, centerId) {
@@ -647,15 +716,16 @@
     if (viewMode === "family") {
       const centerNode = nodeById(centerId || familyCenterId);
       const centerText = centerNode ? centerNode.label : "-";
+      const layoutText = familyLayoutStyle === "radial" ? "放射" : "樹狀";
 
       if (!focusedId) {
-        focusInfo.textContent = `目前：家系模式（中心 ${centerText}，上下各 ${FAMILY_UP_DEPTH} 代，顯示 ${visibleCount || 0} 人）`;
+        focusInfo.textContent = `目前：家系模式(${layoutText})（中心 ${centerText}，上下各 ${FAMILY_UP_DEPTH} 代，顯示 ${visibleCount || 0} 人）`;
         return;
       }
 
       const focusedNode = nodeById(focusedId);
       const focusText = focusedNode ? focusedNode.label : centerText;
-      focusInfo.textContent = `目前：家系模式，已選取 ${focusText}（可視直系 ${Math.max(0, (lineageCount || 0) - 1)} 人）`;
+      focusInfo.textContent = `目前：家系模式(${layoutText})，已選取 ${focusText}（可視直系 ${Math.max(0, (lineageCount || 0) - 1)} 人）`;
       return;
     }
 
@@ -694,7 +764,11 @@
 
     applyHighlight(focusedId, lineage, visibleNodeIds, visibleEdgeIds);
 
-    runLayoutForNodeSet(visibleNodeIds, visibleEdgeIds, animateLayout, 92, () => {
+    runLayoutForNodeSet(visibleNodeIds, visibleEdgeIds, animateLayout, 92, {
+      layoutType: familyLayoutStyle,
+      centerId,
+      lineageSet: lineage,
+    }, () => {
       updateFocusInfo(lineage.size, visibleNodeIds.size, centerId);
     });
   }
@@ -709,7 +783,9 @@
     applyHighlight(focusedId, lineage, allNodeIds, allEdgeIds);
 
     if (animateLayout) {
-      runLayoutForNodeSet(allNodeIds, allEdgeIds, true, 90, () => {
+      runLayoutForNodeSet(allNodeIds, allEdgeIds, true, 90, {
+        layoutType: "tree",
+      }, () => {
         if (centerOnFocused && focusedId) {
           const focusNode = cy.getElementById(focusedId);
           if (focusNode && focusNode.length > 0) {
@@ -901,6 +977,30 @@
     });
   }
 
+  if (familyTreeBtn) {
+    familyTreeBtn.addEventListener("click", () => {
+      if (familyLayoutStyle === "tree") return;
+      familyLayoutStyle = "tree";
+      if (viewMode === "family") {
+        renderCurrentView({ animate: true, relayout: true, centerOnFocused: true });
+      } else {
+        updateModeButtons();
+      }
+    });
+  }
+
+  if (familyRadialBtn) {
+    familyRadialBtn.addEventListener("click", () => {
+      if (familyLayoutStyle === "radial") return;
+      familyLayoutStyle = "radial";
+      if (viewMode === "family") {
+        renderCurrentView({ animate: true, relayout: true, centerOnFocused: true });
+      } else {
+        updateModeButtons();
+      }
+    });
+  }
+
   if (sideBranchToggle) {
     sideBranchToggle.addEventListener("change", () => {
       includeSideBranches = Boolean(sideBranchToggle.checked);
@@ -951,6 +1051,19 @@
   renderSearchResults("");
   setViewMode("family", { animate: false });
 })();
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
