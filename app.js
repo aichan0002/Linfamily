@@ -16,7 +16,7 @@
   const autoZoomToggle = document.getElementById("autoZoomToggle");
   const fullCollapseToggle = document.getElementById("fullCollapseToggle");
 
-  const APP_VERSION = "v2026.03.07-25";
+  const APP_VERSION = "v2026.03.07-26";
 
   if (versionBadge) {
     versionBadge.textContent = `版本 ${APP_VERSION}`;
@@ -34,6 +34,12 @@
     }
     return;
   }
+
+  const dagreReady = typeof window.cytoscapeDagre === "function" && typeof window.dagre !== "undefined";
+  if (dagreReady) {
+    window.cytoscape.use(window.cytoscapeDagre);
+  }
+
 
   const NODE_TONES = [
     { fill: "#16273b", ring: "#7ce8ca" },
@@ -1398,6 +1404,8 @@
     const keepLineCentered = Boolean(options.keepLineCentered);
     const centerOnFocused = options.centerOnFocused !== false;
     const autoFit = options.autoFit !== false;
+    const preferDagre = Boolean(options.preferDagre);
+    const useDagreLayout = layoutType === "tree" && preferDagre && dagreReady;
 
     const nodeCollection = collectionFromIds(nodeIdSet);
     const edgeCollection = edgeCollectionFromIds(edgeIdSet || []);
@@ -1439,6 +1447,21 @@
         levelWidth: () => 100,
         sort: (a, b) => a.data("order") - b.data("order"),
       });
+    } else if (useDagreLayout) {
+      layout = layoutCollection.layout({
+        name: "dagre",
+        fit: false,
+        animate,
+        animationDuration: animate ? 520 : 0,
+        nodeDimensionsIncludeLabels: true,
+        rankDir: "TB",
+        rankSep: 108,
+        nodeSep: 62,
+        edgeSep: 26,
+        ranker: "network-simplex",
+        spacingFactor: 1.05,
+        sort: (a, b) => a.data("order") - b.data("order"),
+      });
     } else {
       const roots = collectionFromIds(topRootsInSet(nodeIdSet));
       layout = layoutCollection.layout({
@@ -1463,16 +1486,23 @@
     layout.on("layoutstop", () => {
       const lockedLineIds = new Set([...primaryLineIds].filter((id) => nodeIdSet.has(id)));
       const postAdjustAnimate = false;
-      if (keepLineCentered && lockedLineIds.size > 0) {
-        alignPrimaryLine(nodeIdSet, primaryLineIds, centerId, postAdjustAnimate);
-        rebalanceSideBranches(nodeIdSet, lockedLineIds, postAdjustAnimate);
-        enforcePrimaryAxisClearance(nodeIdSet, lockedLineIds, centerId, postAdjustAnimate);
-      }
-      separateCoincidentNodes(nodeIdSet, lockedLineIds, postAdjustAnimate);
-      resolveNodeCollisions(nodeIdSet, lockedLineIds, postAdjustAnimate);
-      if (keepLineCentered && lockedLineIds.size > 0) {
-        alignPrimaryLine(nodeIdSet, primaryLineIds, centerId, false);
-        enforcePrimaryAxisClearance(nodeIdSet, lockedLineIds, centerId, false);
+      if (useDagreLayout) {
+        if (keepLineCentered && lockedLineIds.size > 0) {
+          alignPrimaryLine(nodeIdSet, primaryLineIds, centerId, false);
+          enforcePrimaryAxisClearance(nodeIdSet, lockedLineIds, centerId, false);
+        }
+      } else {
+        if (keepLineCentered && lockedLineIds.size > 0) {
+          alignPrimaryLine(nodeIdSet, primaryLineIds, centerId, postAdjustAnimate);
+          rebalanceSideBranches(nodeIdSet, lockedLineIds, postAdjustAnimate);
+          enforcePrimaryAxisClearance(nodeIdSet, lockedLineIds, centerId, postAdjustAnimate);
+        }
+        separateCoincidentNodes(nodeIdSet, lockedLineIds, postAdjustAnimate);
+        resolveNodeCollisions(nodeIdSet, lockedLineIds, postAdjustAnimate);
+        if (keepLineCentered && lockedLineIds.size > 0) {
+          alignPrimaryLine(nodeIdSet, primaryLineIds, centerId, false);
+          enforcePrimaryAxisClearance(nodeIdSet, lockedLineIds, centerId, false);
+        }
       }
       updateVisibleEdgeCurves(nodeIdSet, edgeIdSet, lockedLineIds);
       if (animate) {
@@ -1590,6 +1620,7 @@
       keepLineCentered: familyLayoutStyle === "tree",
       centerOnFocused,
       autoFit: autoZoomOnFocus,
+      preferDagre: familyLayoutStyle === "tree",
     }, () => {
       updateFocusInfo(lineage.size, visibleNodeIds.size, centerId);
     });
