@@ -16,7 +16,7 @@
   const autoZoomToggle = document.getElementById("autoZoomToggle");
   const fullCollapseToggle = document.getElementById("fullCollapseToggle");
 
-  const APP_VERSION = "v2026.03.07-17";
+  const APP_VERSION = "v2026.03.07-18";
 
   if (versionBadge) {
     versionBadge.textContent = `版本 ${APP_VERSION}`;
@@ -734,11 +734,9 @@
       const ele = cy.getElementById(nodeId);
       if (!ele || ele.length === 0) continue;
 
-      if (animate) {
-        ele.animate({ position: { x: centerX, y: ele.position("y") } }, { duration: 280, easing: "ease-out-cubic" });
-      } else {
-        ele.position({ x: centerX, y: ele.position("y") });
-      }
+      // Keep lineage on the center axis first, then run collision solving.
+      // Using immediate position avoids stale coordinates during animation.
+      ele.position({ x: centerX, y: ele.position("y") });
     }
   }
 
