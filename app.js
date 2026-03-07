@@ -774,16 +774,19 @@
     }
     return distMap;
   }
-  function buildFamilyTreeEdgeSet(visibleNodeIds, primaryLineIds) {
+  function buildFamilyTreeEdgeSet(visibleNodeIds, primaryLineIds, centerId) {
     const visibleNodes = visibleNodeIds || new Set();
     const lineSet = primaryLineIds || new Set();
     const selectedEdges = new Set();
+
     if (visibleNodes.size === 0) return selectedEdges;
+
     const lineNodes = [...lineSet]
       .filter((id) => visibleNodes.has(id))
       .map((id) => nodeById(id))
       .filter((node) => Boolean(node))
       .sort((a, b) => a.col - b.col || a.order - b.order);
+
     for (let i = 0; i < lineNodes.length - 1; i += 1) {
       const parent = lineNodes[i];
       const child = lineNodes[i + 1];
@@ -792,54 +795,100 @@
         selectedEdges.add(edgeId);
       }
     }
+
     const distToLine = distanceMapFromSeedSet(lineSet, visibleNodes);
-    const orderedNodes = [...visibleNodes]
-      .map((id) => nodeById(id))
-      .filter((node) => Boolean(node))
-      .sort((a, b) => a.col - b.col || a.order - b.order);
-    for (const node of orderedNodes) {
-      if (lineSet.has(node.id)) continue;
-      const candidateParents = node.parents.filter((parentId) => visibleNodes.has(parentId));
-      if (candidateParents.length === 0) continue;
-      let bestParentId = null;
-      let bestScore = Number.POSITIVE_INFINITY;
-      for (const parentId of candidateParents) {
-        const parentNode = nodeById(parentId);
-        if (!parentNode) continue;
-        const toLine = distToLine.has(parentId) ? distToLine.get(parentId) : 99;
-        const diffCol = Math.abs(parentNode.col - node.col);
-        const lineBonus = lineSet.has(parentId) ? -30 : 0;
-        const score = toLine * 10 + diffCol * 4 + lineBonus + parentNode.order * 0.0001;
-        if (score < bestScore) {
-          bestScore = score;
-          bestParentId = parentId;
+
+    const addTreeEdge = (a, b) => {
+      const forward = `${a}->${b}`;
+      if (edgeMap.has(forward)) {
+        selectedEdges.add(forward);
+        return true;
+      }
+      const backward = `${b}->${a}`;
+      if (edgeMap.has(backward)) {
+        selectedEdges.add(backward);
+        return true;
+      }
+      return false;
+    };
+
+    const visited = new Set();
+    const queue = [];
+
+    const pickStart = () => {
+      if (centerId && visibleNodes.has(centerId)) return centerId;
+      const lineStart = [...lineSet].find((id) => visibleNodes.has(id));
+      if (lineStart) return lineStart;
+      return [...visibleNodes][0];
+    };
+
+    const enqueueStart = (id) => {
+      if (!id || visited.has(id) || !visibleNodes.has(id)) return;
+      visited.add(id);
+      queue.push(id);
+    };
+
+    enqueueStart(pickStart());
+
+    while (visited.size < visibleNodes.size) {
+      while (queue.length > 0) {
+        const currentId = queue.shift();
+        const neighbors = [...(neighborMap.get(currentId) || [])]
+          .filter((id) => visibleNodes.has(id) && !visited.has(id))
+          .sort((a, b) => {
+            const da = distToLine.has(a) ? distToLine.get(a) : 99;
+            const db = distToLine.has(b) ? distToLine.get(b) : 99;
+            if (da !== db) return da - db;
+            const na = nodeById(a);
+            const nb = nodeById(b);
+            if (!na || !nb) return 0;
+            return na.col - nb.col || na.order - nb.order;
+          });
+
+        for (const nextId of neighbors) {
+          visited.add(nextId);
+          queue.push(nextId);
+          addTreeEdge(currentId, nextId);
         }
       }
-      if (bestParentId) {
-        selectedEdges.add(`${bestParentId}->${node.id}`);
-      }
+
+      const remaining = [...visibleNodes]
+        .filter((id) => !visited.has(id))
+        .sort((a, b) => {
+          const da = distToLine.has(a) ? distToLine.get(a) : 99;
+          const db = distToLine.has(b) ? distToLine.get(b) : 99;
+          if (da !== db) return da - db;
+          const na = nodeById(a);
+          const nb = nodeById(b);
+          if (!na || !nb) return 0;
+          return na.col - nb.col || na.order - nb.order;
+        });
+
+      if (remaining.length === 0) break;
+      const seed = remaining[0];
+      enqueueStart(seed);
     }
-    const coveredNodes = new Set();
-    for (const edgeId of selectedEdges) {
-      const parts = edgeId.split("->");
-      if (parts.length !== 2) continue;
-      coveredNodes.add(parts[0]);
-      coveredNodes.add(parts[1]);
-    }
+
     for (const nodeId of visibleNodes) {
-      if (coveredNodes.has(nodeId)) continue;
       const node = nodeById(nodeId);
       if (!node) continue;
+      const hasInTree = [...selectedEdges].some((eid) => {
+        const [s, t] = eid.split("->");
+        return s === nodeId || t === nodeId;
+      });
+      if (hasInTree) continue;
+
       const parentId = node.parents.find((pid) => visibleNodes.has(pid));
       if (parentId) {
-        selectedEdges.add(`${parentId}->${nodeId}`);
+        addTreeEdge(parentId, nodeId);
         continue;
       }
       const childId = node.children.find((cid) => visibleNodes.has(cid));
       if (childId) {
-        selectedEdges.add(`${nodeId}->${childId}`);
+        addTreeEdge(nodeId, childId);
       }
     }
+
     return selectedEdges;
   }
 
@@ -1489,6 +1538,13 @@
       if (useDagreLayout) {
         if (keepLineCentered && lockedLineIds.size > 0) {
           alignPrimaryLine(nodeIdSet, primaryLineIds, centerId, false);
+          rebalanceSideBranches(nodeIdSet, lockedLineIds, false);
+          enforcePrimaryAxisClearance(nodeIdSet, lockedLineIds, centerId, false);
+        }
+        separateCoincidentNodes(nodeIdSet, lockedLineIds, false);
+        resolveNodeCollisions(nodeIdSet, lockedLineIds, false);
+        if (keepLineCentered && lockedLineIds.size > 0) {
+          alignPrimaryLine(nodeIdSet, primaryLineIds, centerId, false);
           enforcePrimaryAxisClearance(nodeIdSet, lockedLineIds, centerId, false);
         }
       } else {
@@ -1605,7 +1661,7 @@
     const primaryLineIds = computePrimaryLine(centerId, FAMILY_UP_DEPTH, FAMILY_DOWN_DEPTH);
     let visibleEdgeIds = familyView.visibleEdges;
     if (familyLayoutStyle === "tree") {
-      visibleEdgeIds = buildFamilyTreeEdgeSet(visibleNodeIds, primaryLineIds);
+      visibleEdgeIds = buildFamilyTreeEdgeSet(visibleNodeIds, primaryLineIds, centerId);
     }
     applyVisibility(visibleNodeIds, visibleEdgeIds);
     const lineage = focusedId
