@@ -16,7 +16,7 @@
   const autoZoomToggle = document.getElementById("autoZoomToggle");
   const fullCollapseToggle = document.getElementById("fullCollapseToggle");
 
-  const APP_VERSION = "v2026.03.07-30";
+  const APP_VERSION = "v2026.03.07-31";
 
   if (versionBadge) {
     versionBadge.textContent = `版本 ${APP_VERSION}`;
@@ -453,7 +453,6 @@
 
   let viewMode = "family";
   let includeSideBranches = false;
-  let familyLayoutStyle = "tree";
   let autoZoomOnFocus = true;
   let collapseMinorInFull = true;
   let focusedId = null;
@@ -1724,6 +1723,30 @@
         }
       }
 
+      if (left.length === 0 && right.length > 1) {
+        const ordered = right.slice().sort((a, b) => a.order - b.order);
+        left.length = 0;
+        right.length = 0;
+        for (let i = 0; i < ordered.length; i += 1) {
+          if (i % 2 === 0) {
+            left.push(ordered[i]);
+          } else {
+            right.push(ordered[i]);
+          }
+        }
+      } else if (right.length === 0 && left.length > 1) {
+        const ordered = left.slice().sort((a, b) => a.order - b.order);
+        left.length = 0;
+        right.length = 0;
+        for (let i = 0; i < ordered.length; i += 1) {
+          if (i % 2 === 0) {
+            left.push(ordered[i]);
+          } else {
+            right.push(ordered[i]);
+          }
+        }
+      }
+
       left.sort((a, b) => (b.x - a.x) || (a.order - b.order));
       right.sort((a, b) => (a.x - b.x) || (a.order - b.order));
 
@@ -1931,10 +1954,10 @@
       sideBranchToggle.disabled = viewMode !== "family";
     }
     if (familyTreeBtn) {
-      familyTreeBtn.classList.toggle("is-active", familyLayoutStyle === "tree");
+      familyTreeBtn.style.display = "none";
     }
     if (familyRadialBtn) {
-      familyRadialBtn.classList.toggle("is-active", familyLayoutStyle === "radial");
+      familyRadialBtn.style.display = "none";
     }
     if (fullCollapseToggle) {
       fullCollapseToggle.checked = collapseMinorInFull;
@@ -1944,23 +1967,20 @@
       autoZoomToggle.checked = autoZoomOnFocus;
     }
   }
-
   function updateFocusInfo(lineageCount, visibleCount, centerId) {
     if (!focusInfo) return;
 
     if (viewMode === "family") {
       const centerNode = nodeById(centerId || familyCenterId);
       const centerText = centerNode ? centerNode.label : "-";
-      const layoutText = familyLayoutStyle === "radial" ? "放射" : "樹狀";
-
       if (!focusedId) {
-        focusInfo.textContent = `目前：家系模式(${layoutText})（中心 ${centerText}，上下各 ${FAMILY_UP_DEPTH} 代，顯示 ${visibleCount || 0} 人）`;
+        focusInfo.textContent = `目前：家系模式（中心 ${centerText}，上下各 ${FAMILY_UP_DEPTH} 代，顯示 ${visibleCount || 0} 人）`;
         return;
       }
 
       const focusedNode = nodeById(focusedId);
       const focusText = focusedNode ? focusedNode.label : centerText;
-      focusInfo.textContent = `目前：家系模式(${layoutText})，已選取 ${focusText}（可視直系 ${Math.max(0, (lineageCount || 0) - 1)} 人）`;
+      focusInfo.textContent = `目前：家系模式，已選取 ${focusText}（可視直系 ${Math.max(0, (lineageCount || 0) - 1)} 人）`;
       return;
     }
 
@@ -1991,29 +2011,63 @@
 
     const visibleNodeIds = familyView.visibleNodes;
     const primaryLineIds = computePrimaryLine(centerId, FAMILY_UP_DEPTH, FAMILY_DOWN_DEPTH);
-    let visibleEdgeIds = familyView.visibleEdges;
-    if (familyLayoutStyle === "tree") {
-      visibleEdgeIds = buildFamilyTreeEdgeSet(visibleNodeIds, primaryLineIds, centerId);
-    }
+    const visibleEdgeIds = buildFamilyTreeEdgeSet(visibleNodeIds, primaryLineIds, centerId);
+
     applyVisibility(visibleNodeIds, visibleEdgeIds);
     const lineage = focusedId
       ? new Set([...familyView.coreLineageNodes].filter((id) => visibleNodeIds.has(id)))
       : new Set();
     applyHighlight(focusedId, lineage, visibleNodeIds, visibleEdgeIds);
     runLayoutForNodeSet(visibleNodeIds, visibleEdgeIds, animateLayout, 92, {
-      layoutType: familyLayoutStyle,
+      layoutType: "tree",
       centerId,
       lineageSet: lineage,
       primaryLineIds,
-      keepLineCentered: familyLayoutStyle === "tree",
+      keepLineCentered: true,
       centerOnFocused,
       autoFit: autoZoomOnFocus,
-      preferDagre: familyLayoutStyle === "tree",
+      preferDagre: true,
     }, () => {
       updateFocusInfo(lineage.size, visibleNodeIds.size, centerId);
     });
   }
+  function collectDescendantsInSet(rootId, allowedNodeIds) {
+    const allowed = allowedNodeIds || new Set();
+    const descendants = new Set();
+    if (!rootId || !allowed.has(rootId)) return descendants;
 
+    const queue = [rootId];
+    descendants.add(rootId);
+
+    while (queue.length > 0) {
+      const currentId = queue.shift();
+      const currentNode = nodeById(currentId);
+      if (!currentNode) continue;
+
+      for (const childId of currentNode.children) {
+        if (!allowed.has(childId) || descendants.has(childId)) continue;
+        descendants.add(childId);
+        queue.push(childId);
+      }
+    }
+
+    return descendants;
+  }
+
+  function collectEdgeSubset(nodeIdSet, candidateEdgeIds) {
+    const subset = new Set();
+    const candidates = candidateEdgeIds || new Set();
+
+    for (const edgeId of candidates) {
+      const parts = edgeId.split("->");
+      if (parts.length !== 2) continue;
+      if (nodeIdSet.has(parts[0]) && nodeIdSet.has(parts[1])) {
+        subset.add(edgeId);
+      }
+    }
+
+    return subset;
+  }
   function renderFullView(animateLayout, centerOnFocused) {
     const fullView = collectFullView(collapseMinorInFull, focusedId);
     const visibleNodeIds = fullView.visibleNodes;
@@ -2029,6 +2083,30 @@
     applyHighlight(focusedId, lineage, visibleNodeIds, visibleEdgeIds);
 
     if (animateLayout) {
+      if (focusedId) {
+        const subtreeNodeIds = collectDescendantsInSet(focusedId, visibleNodeIds);
+        const subtreeEdgeIds = collectEdgeSubset(subtreeNodeIds, visibleEdgeIds);
+        const subtreeLine = new Set(
+          [...computePrimaryLine(focusedId, 0, Number.POSITIVE_INFINITY)]
+            .filter((id) => subtreeNodeIds.has(id)),
+        );
+        const subtreeLineage = new Set([...lineage].filter((id) => subtreeNodeIds.has(id)));
+
+        runLayoutForNodeSet(subtreeNodeIds, subtreeEdgeIds, true, 92, {
+          layoutType: "tree",
+          centerId: focusedId,
+          lineageSet: subtreeLineage,
+          primaryLineIds: subtreeLine,
+          keepLineCentered: true,
+          centerOnFocused,
+          autoFit: autoZoomOnFocus,
+          preferDagre: true,
+        }, () => {
+          updateFocusInfo(lineage.size, visibleNodeIds.size, focusedId);
+        });
+        return;
+      }
+
       runLayoutForNodeSet(visibleNodeIds, visibleEdgeIds, true, 92, {
         layoutType: "tree",
         centerId: focusedId,
@@ -2049,7 +2127,6 @@
 
     updateFocusInfo(lineage.size, visibleNodeIds.size, focusedId);
   }
-
   function renderCurrentView(options = {}) {
     const {
       animate = true,
@@ -2233,11 +2310,6 @@
   }
 
   cy.on("grab", "node", (event) => {
-    if (viewMode !== "family" || familyLayoutStyle !== "tree") {
-      dragCascadeState = null;
-      return;
-    }
-
     const rootEle = event.target;
     const rootId = rootEle.id();
     const descendantIds = collectVisibleDescendants(rootId);
@@ -2313,24 +2385,6 @@
     });
   }
 
-  if (familyTreeBtn) {
-    familyTreeBtn.addEventListener("click", () => {
-      if (familyLayoutStyle === "tree") return;
-      familyLayoutStyle = "tree";
-      renderCurrentView({ animate: true, relayout: true, centerOnFocused: true });
-    });
-  }
-
-  if (familyRadialBtn) {
-    familyRadialBtn.addEventListener("click", () => {
-      familyLayoutStyle = "radial";
-      if (viewMode !== "family") {
-        setViewMode("family", { animate: true });
-        return;
-      }
-      renderCurrentView({ animate: true, relayout: true, centerOnFocused: true });
-    });
-  }
 
   if (autoZoomToggle) {
     autoZoomToggle.addEventListener("change", () => {
@@ -2403,4 +2457,5 @@
   renderSearchResults("");
   setViewMode("family", { animate: false });
 })();
+
 
