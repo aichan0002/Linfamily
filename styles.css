@@ -118,27 +118,29 @@ body {
 
 .graph-edge-line {
   fill: none;
-  stroke: rgba(123, 138, 159, 0.66);
+  stroke: var(--edge-line, rgba(123, 138, 159, 0.66));
   stroke-width: 1.9;
   stroke-linecap: round;
   vector-effect: non-scaling-stroke;
+  transition: stroke 140ms ease, opacity 140ms ease;
 }
 
 .graph-edge-arrow {
   fill: none;
-  stroke: rgba(144, 162, 185, 0.8);
+  stroke: var(--edge-arrow, rgba(144, 162, 185, 0.8));
   stroke-width: 1.9;
   stroke-linecap: round;
   stroke-linejoin: round;
   vector-effect: non-scaling-stroke;
+  transition: stroke 140ms ease, opacity 140ms ease;
 }
 
 .graph-edge.active .graph-edge-line {
-  stroke: rgba(104, 239, 197, 0.95);
+  stroke: var(--edge-line-active, rgba(104, 239, 197, 0.95));
 }
 
 .graph-edge.active .graph-edge-arrow {
-  stroke: rgba(136, 255, 218, 0.98);
+  stroke: var(--edge-arrow-active, rgba(136, 255, 218, 0.98));
 }
 
 .graph-edge.inactive {
@@ -376,3 +378,4 @@ body {
     padding: 12px;
   }
 }
+

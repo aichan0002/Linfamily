@@ -13,7 +13,7 @@
   const searchResults = document.getElementById("searchResults");
   const versionBadge = document.getElementById("versionBadge");
 
-  const APP_VERSION = "v2026.03.06-07";
+  const APP_VERSION = "v2026.03.07-08";
 
   if (versionBadge) {
     versionBadge.textContent = `版本 ${APP_VERSION}`;
@@ -164,6 +164,7 @@
 
   const nodes = [...nodeMap.values()];
   const edges = [...edgeMap.values()];
+  const maxGenerationCol = Math.max(1, ...nodes.map((node) => node.col));
   const neighborMap = new Map(nodes.map((node) => [node.id, new Set()]));
 
   for (const edge of edges) {
@@ -202,6 +203,21 @@
 
   function toneForCol(col) {
     return NODE_TONES[Math.abs(col) % NODE_TONES.length];
+  }
+
+  function edgeToneForGeneration(col) {
+    const ratio = Math.max(0, Math.min(1, col / maxGenerationCol));
+    const hue = Math.round(28 + ratio * 198);
+    const sat = Math.round(76 - ratio * 34);
+    const light = Math.round(40 + ratio * 36);
+    const baseAlpha = 0.84 - ratio * 0.26;
+
+    return {
+      line: `hsla(${hue}, ${sat}%, ${light}%, ${baseAlpha.toFixed(3)})`,
+      arrow: `hsla(${hue}, ${Math.max(30, sat - 6)}%, ${Math.min(88, light + 6)}%, ${(baseAlpha + 0.06).toFixed(3)})`,
+      activeLine: `hsla(${hue}, ${Math.max(26, sat - 10)}%, ${Math.min(90, light + 18)}%, 0.98)`,
+      activeArrow: `hsla(${hue}, ${Math.max(24, sat - 12)}%, ${Math.min(94, light + 24)}%, 0.99)`,
+    };
   }
 
   function initializeForceLayout() {
@@ -304,6 +320,15 @@
       d: "M -10 -5.5 L 0 0 L -10 5.5",
     });
 
+    const sourceNode = nodeMap.get(edge.source);
+    const targetNode = nodeMap.get(edge.target);
+    const generationCol = sourceNode && targetNode ? Math.min(sourceNode.col, targetNode.col) : 0;
+    const edgeTone = edgeToneForGeneration(generationCol);
+    group.style.setProperty("--edge-line", edgeTone.line);
+    group.style.setProperty("--edge-arrow", edgeTone.arrow);
+    group.style.setProperty("--edge-line-active", edgeTone.activeLine);
+    group.style.setProperty("--edge-arrow-active", edgeTone.activeArrow);
+
     group.appendChild(line);
     group.appendChild(arrow);
     edgeLayer.appendChild(group);
@@ -314,7 +339,7 @@
       group,
       line,
       arrow,
-      curveSign: hashText(`${edge.source}|${edge.target}`) % 2 === 0 ? 1 : -1,
+      generationCol,
     });
   }
 
@@ -450,174 +475,181 @@
     const centerNode = nodeMap.get(centerId);
     if (!centerNode) return null;
 
+    const component = new Set([centerId]);
     const queue = [centerId];
-    const distMap = new Map([[centerId, 0]]);
 
     while (queue.length > 0) {
       const currentId = queue.shift();
-      const currentDist = distMap.get(currentId) || 0;
       const neighbors = neighborMap.get(currentId);
       if (!neighbors) continue;
 
       for (const nextId of neighbors) {
-        if (distMap.has(nextId)) continue;
-        distMap.set(nextId, currentDist + 1);
+        if (component.has(nextId)) continue;
+        component.add(nextId);
         queue.push(nextId);
       }
     }
 
-    function directedDistance(starts, expand) {
-      const map = new Map();
-      const q = starts.map((id) => ({ id, d: 0 }));
-      for (const item of q) {
-        map.set(item.id, 0);
-      }
-
-      while (q.length > 0) {
-        const current = q.shift();
-        const node = nodeMap.get(current.id);
-        if (!node) continue;
-
-        const nextIds = expand(node);
-        for (const nextId of nextIds) {
-          if (map.has(nextId)) continue;
-          map.set(nextId, current.d + 1);
-          q.push({ id: nextId, d: current.d + 1 });
-        }
-      }
-
-      return map;
+    const componentNodes = [];
+    for (const nodeId of component) {
+      const node = nodeMap.get(nodeId);
+      if (node) componentNodes.push(node);
     }
 
-    const ancestorDist = directedDistance([centerId], (node) => node.parents);
-    const descendantDist = directedDistance([centerId], (node) => node.children);
-    ancestorDist.delete(centerId);
-    descendantDist.delete(centerId);
+    if (componentNodes.length === 0) {
+      return null;
+    }
 
     const lineageSet = computeFocusSet(centerId);
-    const maxConnectedDist = Math.max(0, ...distMap.values());
-    const detachedLevel = maxConnectedDist + 1;
-
-    const ancestorLevels = new Map();
-    const descendantLevels = new Map();
-    const sideNodes = [];
-    const detachedNodes = [];
-
-    function pushLevel(map, level, node) {
-      if (!map.has(level)) map.set(level, []);
-      map.get(level).push(node);
-    }
-
-    function importanceOf(nodeId) {
-      const node = nodeMap.get(nodeId);
-      if (!node) return 0;
-      const isLineage = lineageSet.has(nodeId);
-      const degree = node.parents.length + node.children.length;
-      const dist = distMap.get(nodeId) ?? detachedLevel;
-      return (isLineage ? 120 : 0) + degree * 9 - dist * 7;
-    }
-
-    for (const node of nodes) {
-      if (node.id === centerId) continue;
-
-      if (!distMap.has(node.id)) {
-        detachedNodes.push(node);
-        continue;
-      }
-
-      const anc = ancestorDist.get(node.id);
-      const desc = descendantDist.get(node.id);
-      if (Number.isFinite(anc) && (!Number.isFinite(desc) || anc <= desc)) {
-        pushLevel(ancestorLevels, anc, node);
-      } else if (Number.isFinite(desc)) {
-        pushLevel(descendantLevels, desc, node);
-      } else {
-        sideNodes.push(node);
-      }
-    }
-
     const targets = new Map();
-    targets.set(centerId, { x: 0, y: 0 });
-    const placedX = new Map([[centerId, 0]]);
-    const rowGap = Math.max(160, 120 + Math.sqrt(nodes.length) * 5.8);
-    const colGap = Math.max(128, 94 + Math.sqrt(nodes.length) * 4.5);
 
-    function neighborAnchors(node, prevLookup) {
-      const anchors = [];
-      for (const parentId of node.parents) {
-        if (prevLookup.has(parentId)) anchors.push(prevLookup.get(parentId));
-      }
-      for (const childId of node.children) {
-        if (prevLookup.has(childId)) anchors.push(prevLookup.get(childId));
-      }
-      return anchors;
+    function importanceOf(node) {
+      const lineageBonus = lineageSet.has(node.id) ? 110 : 0;
+      const degree = node.parents.length + node.children.length;
+      const centerDistPenalty = Math.abs(node.col - centerNode.col) * 8;
+      return lineageBonus + degree * 12 - centerDistPenalty;
     }
 
-    function positionLevel(levelNodes, level, directionSign, prevLookup) {
-      if (!levelNodes || levelNodes.length === 0) return;
+    const levels = new Map();
+    function pushLevel(level, node) {
+      if (!levels.has(level)) levels.set(level, []);
+      levels.get(level).push(node);
+    }
 
-      const sortable = levelNodes.map((node) => {
-        const anchors = neighborAnchors(node, prevLookup);
+    for (const node of componentNodes) {
+      const level = node.col - centerNode.col;
+      pushLevel(level, node);
+    }
+
+    const sortedLevels = [...levels.keys()].sort((a, b) => a - b);
+    const orderByLevel = new Map();
+
+    for (const level of sortedLevels) {
+      const ordered = levels
+        .get(level)
+        .slice()
+        .sort(
+          (a, b) =>
+            importanceOf(b) - importanceOf(a) ||
+            a.order - b.order ||
+            a.label.localeCompare(b.label, "zh-Hant"),
+        );
+      orderByLevel.set(level, ordered);
+    }
+
+    function buildIndexLookup() {
+      const lookup = new Map();
+      for (const level of sortedLevels) {
+        const bucket = orderByLevel.get(level) || [];
+        for (let i = 0; i < bucket.length; i += 1) {
+          lookup.set(bucket[i].id, i);
+        }
+      }
+      return lookup;
+    }
+
+    function sortLevelByNeighbor(level, useParents, indexLookup) {
+      const bucket = orderByLevel.get(level);
+      if (!bucket || bucket.length <= 1) return;
+
+      const decorated = bucket.map((node, idx) => {
+        const refs = useParents ? node.parents : node.children;
+        const anchors = [];
+
+        for (const refId of refs) {
+          if (!component.has(refId)) continue;
+          const refNode = nodeMap.get(refId);
+          if (!refNode) continue;
+
+          const refLevel = refNode.col - centerNode.col;
+          if (useParents && refLevel >= level) continue;
+          if (!useParents && refLevel <= level) continue;
+
+          const anchor = indexLookup.get(refId);
+          if (Number.isFinite(anchor)) anchors.push(anchor);
+        }
+
         const barycenter =
           anchors.length > 0
             ? anchors.reduce((sum, value) => sum + value, 0) / anchors.length
-            : 0;
+            : idx;
+
         return {
           node,
           barycenter,
-          importance: importanceOf(node.id),
+          importance: importanceOf(node),
           seed: hashText(node.id) % 1000,
         };
       });
 
-      sortable.sort((a, b) => {
+      decorated.sort((a, b) => {
         if (a.barycenter !== b.barycenter) return a.barycenter - b.barycenter;
         if (a.importance !== b.importance) return b.importance - a.importance;
         return a.seed - b.seed;
       });
 
-      const count = sortable.length;
-      const span = (count - 1) * colGap;
-      const startX = -span / 2;
-      const y = directionSign * level * rowGap;
+      orderByLevel.set(
+        level,
+        decorated.map((item) => item.node),
+      );
+    }
 
-      for (let i = 0; i < count; i += 1) {
-        const entry = sortable[i];
-        const x = startX + i * colGap;
-        targets.set(entry.node.id, { x, y });
-        placedX.set(entry.node.id, x);
+    for (let pass = 0; pass < 3; pass += 1) {
+      let indexLookup = buildIndexLookup();
+      for (let i = 1; i < sortedLevels.length; i += 1) {
+        const level = sortedLevels[i];
+        sortLevelByNeighbor(level, true, indexLookup);
+        indexLookup = buildIndexLookup();
+      }
+
+      indexLookup = buildIndexLookup();
+      for (let i = sortedLevels.length - 2; i >= 0; i -= 1) {
+        const level = sortedLevels[i];
+        sortLevelByNeighbor(level, false, indexLookup);
+        indexLookup = buildIndexLookup();
       }
     }
 
-    const ancLevels = [...ancestorLevels.keys()].sort((a, b) => a - b);
-    for (const level of ancLevels) {
-      positionLevel(ancestorLevels.get(level), level, -1, placedX);
+    const rowGap = Math.max(154, 114 + Math.sqrt(nodes.length) * 4.8);
+    const colGap = Math.max(122, 92 + Math.sqrt(nodes.length) * 4.1);
+    let widestCount = 1;
+
+    for (const level of sortedLevels) {
+      const bucket = orderByLevel.get(level) || [];
+      widestCount = Math.max(widestCount, bucket.length);
+
+      const span = (bucket.length - 1) * colGap;
+      const startX = -span / 2;
+      const y = level * rowGap;
+
+      for (let i = 0; i < bucket.length; i += 1) {
+        const node = bucket[i];
+        const baseX = startX + i * colGap;
+        const isLineage = lineageSet.has(node.id);
+        const degree = node.parents.length + node.children.length;
+        const sideSign = baseX === 0 ? (hashText(node.id) % 2 === 0 ? -1 : 1) : Math.sign(baseX);
+        const pushOut = isLineage ? 0 : 58 + Math.max(0, 3 - degree) * 26;
+
+        targets.set(node.id, {
+          x: baseX + sideSign * pushOut,
+          y,
+        });
+      }
     }
 
-    const descLevels = [...descendantLevels.keys()].sort((a, b) => a - b);
-    for (const level of descLevels) {
-      positionLevel(descendantLevels.get(level), level, 1, placedX);
-    }
+    const detachedNodes = nodes
+      .filter((node) => !component.has(node.id))
+      .sort((a, b) => a.col - b.col || a.order - b.order);
 
-    const sideOrdered = sideNodes
-      .slice()
-      .sort((a, b) => importanceOf(a.id) - importanceOf(b.id) || a.order - b.order);
-    const detachedOrdered = detachedNodes
-      .slice()
-      .sort((a, b) => importanceOf(a.id) - importanceOf(b.id) || a.order - b.order);
+    const sideBaseX = Math.max(430, (widestCount * colGap) / 2 + 240);
+    const sideStepX = 86;
 
-    const sideAll = sideOrdered.concat(detachedOrdered);
-    const sideXBase = Math.max(320, (Math.max(ancLevels.length, descLevels.length, 1) + 1) * colGap * 0.85);
-    const sideYGap = Math.max(100, rowGap * 0.72);
-
-    for (let i = 0; i < sideAll.length; i += 1) {
-      const node = sideAll[i];
-      const seed = hashText(node.id);
-      const side = seed % 2 === 0 ? -1 : 1;
-      const sideRank = Math.floor(i / 2);
-      const x = side * (sideXBase + sideRank * 82);
-      const yDirection = (sideRank % 2 === 0 ? 1 : -1) * (seed % 3 === 0 ? 1 : -1);
-      const y = yDirection * Math.ceil((sideRank + 1) / 2) * sideYGap;
+    for (let i = 0; i < detachedNodes.length; i += 1) {
+      const node = detachedNodes[i];
+      const side = i % 2 === 0 ? -1 : 1;
+      const lane = Math.floor(i / 2);
+      const y = (node.col - centerNode.col) * rowGap + ((lane % 3) - 1) * 24;
+      const x = side * (sideBaseX + lane * sideStepX);
       targets.set(node.id, { x, y });
     }
 
@@ -791,7 +823,9 @@
     const points = edgeEndpoints(sourceNode, targetNode);
     const perpX = -points.uy;
     const perpY = points.ux;
-    const curveAmount = Math.max(10, Math.min(34, points.dist * 0.12)) * edgeVisual.curveSign;
+    const horizontalDelta = points.endX - points.startX;
+    const bendSign = horizontalDelta === 0 ? 0 : Math.sign(horizontalDelta);
+    const curveAmount = Math.min(20, Math.abs(horizontalDelta) * 0.22) * bendSign;
 
     const ctrlX = (points.startX + points.endX) / 2 + perpX * curveAmount;
     const ctrlY = (points.startY + points.endY) / 2 + perpY * curveAmount;
@@ -1231,6 +1265,12 @@
   fitView();
   renderSearchResults("");
 })();
+
+
+
+
+
+
 
 
 
