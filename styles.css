@@ -193,6 +193,18 @@ body {
   grid-template-columns: 1fr 1fr;
   gap: 8px;
 }
+.zoom-toggle {
+  margin-top: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.zoom-toggle input {
+  accent-color: #67efc5;
+}
 .search-block {
   margin: 0;
   border-top: 1px solid var(--line);
@@ -338,5 +350,6 @@ body {
     padding: 12px;
   }
 }
+
 
 
