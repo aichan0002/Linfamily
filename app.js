@@ -16,7 +16,7 @@
   const autoZoomToggle = document.getElementById("autoZoomToggle");
   const fullCollapseToggle = document.getElementById("fullCollapseToggle");
 
-  const APP_VERSION = "v2026.03.07-16";
+  const APP_VERSION = "v2026.03.07-17";
 
   if (versionBadge) {
     versionBadge.textContent = `版本 ${APP_VERSION}`;
@@ -770,6 +770,93 @@
     }
   }
 
+  function resolveNodeCollisions(nodeIds, lockedIds, animate) {
+    const lockSet = lockedIds || new Set();
+    const nodeElements = [];
+
+    for (const nodeId of nodeIds) {
+      const ele = cy.getElementById(nodeId);
+      if (!ele || ele.length === 0) continue;
+      nodeElements.push(ele);
+    }
+
+    if (nodeElements.length <= 1) return;
+    if (nodeElements.length > 220) return;
+
+    const posMap = new Map();
+    for (const ele of nodeElements) {
+      posMap.set(ele.id(), { x: ele.position("x"), y: ele.position("y") });
+    }
+
+    const minGap = 14;
+    const maxPass = 18;
+
+    for (let pass = 0; pass < maxPass; pass += 1) {
+      let moved = false;
+
+      for (let i = 0; i < nodeElements.length; i += 1) {
+        for (let j = i + 1; j < nodeElements.length; j += 1) {
+          const a = nodeElements[i];
+          const b = nodeElements[j];
+          const pa = posMap.get(a.id());
+          const pb = posMap.get(b.id());
+          if (!pa || !pb) continue;
+
+          const dx = pb.x - pa.x;
+          const dy = pb.y - pa.y;
+          const dist = Math.hypot(dx, dy) || 0.0001;
+          const minDist = (a.width() + b.width()) / 2 + minGap;
+          if (dist >= minDist) continue;
+
+          const overlap = minDist - dist;
+          const aLocked = lockSet.has(a.id());
+          const bLocked = lockSet.has(b.id());
+          if (aLocked && bLocked) continue;
+
+          let ux = dx / dist;
+          let uy = dy / dist;
+
+          if (!Number.isFinite(ux) || !Number.isFinite(uy)) {
+            ux = 0;
+            uy = 1;
+          }
+
+          if ((aLocked || bLocked) && Math.abs(ux) < 0.22) {
+            ux = pa.x <= pb.x ? 1 : -1;
+            uy = 0;
+          }
+
+          if (aLocked) {
+            pb.x += ux * overlap;
+            pb.y += uy * overlap;
+          } else if (bLocked) {
+            pa.x -= ux * overlap;
+            pa.y -= uy * overlap;
+          } else {
+            const half = overlap / 2;
+            pa.x -= ux * half;
+            pa.y -= uy * half;
+            pb.x += ux * half;
+            pb.y += uy * half;
+          }
+
+          moved = true;
+        }
+      }
+
+      if (!moved) break;
+    }
+
+    for (const ele of nodeElements) {
+      const pos = posMap.get(ele.id());
+      if (!pos) continue;
+      if (animate) {
+        ele.animate({ position: { x: pos.x, y: pos.y } }, { duration: 220, easing: "ease-out-cubic" });
+      } else {
+        ele.position({ x: pos.x, y: pos.y });
+      }
+    }
+  }
   function topRootsInSet(idSet) {
     const roots = [];
 
@@ -925,6 +1012,8 @@
         alignPrimaryLine(nodeIdSet, primaryLineIds, centerId, animate);
       }
       separateCoincidentNodes(nodeIdSet, animate);
+      const lockedLineIds = new Set([...primaryLineIds].filter((id) => nodeIdSet.has(id)));
+      resolveNodeCollisions(nodeIdSet, lockedLineIds, animate);
 
       const visibleEles = nodeCollection.union(edgeCollection);
       if (autoFit) {
