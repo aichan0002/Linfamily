@@ -12,7 +12,7 @@
   const fullModeBtn = document.getElementById("fullModeBtn");
   const sideBranchToggle = document.getElementById("sideBranchToggle");
 
-  const APP_VERSION = "v2026.03.07-10";
+  const APP_VERSION = "v2026.03.07-11";
 
   if (versionBadge) {
     versionBadge.textContent = `版本 ${APP_VERSION}`;
@@ -376,6 +376,17 @@
     return collection;
   }
 
+  function edgeCollectionFromIds(ids) {
+    let collection = cy.collection();
+    for (const id of ids) {
+      const ele = cy.getElementById(id);
+      if (ele && ele.length > 0) {
+        collection = collection.union(ele);
+      }
+    }
+    return collection;
+  }
+
   function nodeById(id) {
     return id ? nodeMap.get(id) : null;
   }
@@ -570,8 +581,11 @@
     });
   }
 
-  function runLayoutForNodeSet(nodeIdSet, animate, fitPadding, onDone) {
+  function runLayoutForNodeSet(nodeIdSet, edgeIdSet, animate, fitPadding, onDone) {
     const nodeCollection = collectionFromIds(nodeIdSet);
+    const edgeCollection = edgeCollectionFromIds(edgeIdSet || []);
+    const layoutCollection = nodeCollection.union(edgeCollection);
+
     if (nodeCollection.length === 0) {
       if (typeof onDone === "function") onDone();
       return;
@@ -579,7 +593,7 @@
 
     const roots = collectionFromIds(topRootsInSet(nodeIdSet));
 
-    const layout = nodeCollection.layout({
+    const layout = layoutCollection.layout({
       name: "breadthfirst",
       directed: true,
       roots,
@@ -596,7 +610,7 @@
     });
 
     layout.on("layoutstop", () => {
-      const visibleEles = nodeCollection.union(nodeCollection.connectedEdges());
+      const visibleEles = nodeCollection.union(edgeCollection);
       if (animate) {
         cy.animate(
           { fit: { eles: visibleEles, padding: fitPadding } },
@@ -680,7 +694,7 @@
 
     applyHighlight(focusedId, lineage, visibleNodeIds, visibleEdgeIds);
 
-    runLayoutForNodeSet(visibleNodeIds, animateLayout, 92, () => {
+    runLayoutForNodeSet(visibleNodeIds, visibleEdgeIds, animateLayout, 92, () => {
       updateFocusInfo(lineage.size, visibleNodeIds.size, centerId);
     });
   }
@@ -695,7 +709,7 @@
     applyHighlight(focusedId, lineage, allNodeIds, allEdgeIds);
 
     if (animateLayout) {
-      runLayoutForNodeSet(allNodeIds, true, 90, () => {
+      runLayoutForNodeSet(allNodeIds, allEdgeIds, true, 90, () => {
         if (centerOnFocused && focusedId) {
           const focusNode = cy.getElementById(focusedId);
           if (focusNode && focusNode.length > 0) {
@@ -937,3 +951,7 @@
   renderSearchResults("");
   setViewMode("family", { animate: false });
 })();
+
+
+
+
