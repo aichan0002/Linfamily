@@ -16,7 +16,7 @@
   const autoZoomToggle = document.getElementById("autoZoomToggle");
   const fullCollapseToggle = document.getElementById("fullCollapseToggle");
 
-  const APP_VERSION = "v2026.03.07-22";
+  const APP_VERSION = "v2026.03.07-23";
 
   if (versionBadge) {
     versionBadge.textContent = `版本 ${APP_VERSION}`;
@@ -841,47 +841,131 @@
   }
 
   function rebalanceSideBranches(nodeIds, lockedIds, animate) {
-    const lockSet = lockedIds || new Set();
-    if (lockSet.size === 0) return;
-
+    const lineSet = lockedIds || new Set();
+    if (lineSet.size === 0) return;
     const visibleSet = nodeIds || new Set();
-    const lineageNodes = [...lockSet]
+    const lineageNodes = [...lineSet]
       .map((id) => nodeById(id))
       .filter((node) => Boolean(node))
       .sort((a, b) => a.col - b.col || a.order - b.order);
-
+    if (lineageNodes.length === 0) return;
+    const centerX = lineageNodes
+      .map((node) => cy.getElementById(node.id))
+      .filter((ele) => ele && ele.length > 0)
+      .reduce((sum, ele) => sum + ele.position("x"), 0) / lineageNodes.length;
+    if (!Number.isFinite(centerX)) return;
+    const rootLaneMap = new Map();
+    let leftLaneCounter = 0;
+    let rightLaneCounter = 0;
     for (const lineageNode of lineageNodes) {
-      const parentEle = cy.getElementById(lineageNode.id);
-      if (!parentEle || parentEle.length === 0) continue;
-
+      const lineageEle = cy.getElementById(lineageNode.id);
+      if (!lineageEle || lineageEle.length === 0) continue;
       const sideChildren = lineageNode.children
-        .filter((childId) => visibleSet.has(childId) && !lockSet.has(childId))
-        .map((childId) => cy.getElementById(childId))
-        .filter((ele) => ele && ele.length > 0)
-        .sort((a, b) => a.data("order") - b.data("order"));
-
+        .filter((childId) => visibleSet.has(childId) && !lineSet.has(childId))
+        .map((childId) => ({
+          id: childId,
+          ele: cy.getElementById(childId),
+        }))
+        .filter((item) => item.ele && item.ele.length > 0)
+        .sort((a, b) => a.ele.position("y") - b.ele.position("y") || a.ele.data("order") - b.ele.data("order"));
       if (sideChildren.length === 0) continue;
-
-      const parentX = parentEle.position("x");
-      const avgDeltaX = sideChildren.reduce((sum, ele) => sum + (ele.position("x") - parentX), 0) / sideChildren.length;
-      const firstDir = avgDeltaX < 0 ? -1 : 1;
-      const spacing = Math.max(96, Math.round(parentEle.width() * 0.95));
-
-      sideChildren.forEach((childEle, idx) => {
-        const ring = Math.floor(idx / 2) + 1;
-        const dir = idx % 2 === 0 ? firstDir : -firstDir;
-        const targetX = parentX + dir * ring * spacing;
-        const targetY = childEle.position("y");
-
-        if (animate) {
-          childEle.animate({ position: { x: targetX, y: targetY } }, { duration: 220, easing: "ease-out-cubic" });
+      const left = [];
+      const right = [];
+      for (const child of sideChildren) {
+        const delta = child.ele.position("x") - centerX;
+        if (Math.abs(delta) < 1) {
+          if (left.length <= right.length) {
+            left.push(child);
+          } else {
+            right.push(child);
+          }
+        } else if (delta < 0) {
+          left.push(child);
         } else {
-          childEle.position({ x: targetX, y: targetY });
+          right.push(child);
         }
+      }
+      for (const child of left) {
+        if (!rootLaneMap.has(child.id)) {
+          rootLaneMap.set(child.id, {
+            side: -1,
+            lane: leftLaneCounter,
+            rootLineageId: lineageNode.id,
+            rootOrder: lineageNode.order,
+          });
+          leftLaneCounter += 1;
+        }
+      }
+      for (const child of right) {
+        if (!rootLaneMap.has(child.id)) {
+          rootLaneMap.set(child.id, {
+            side: 1,
+            lane: rightLaneCounter,
+            rootLineageId: lineageNode.id,
+            rootOrder: lineageNode.order,
+          });
+          rightLaneCounter += 1;
+        }
+      }
+    }
+    if (rootLaneMap.size === 0) return;
+    const placement = new Map();
+    const queue = [];
+    for (const [rootId, cfg] of rootLaneMap.entries()) {
+      queue.push({
+        id: rootId,
+        side: cfg.side,
+        lane: cfg.lane,
+        depth: 1,
+        rootLineageId: cfg.rootLineageId,
+        rootOrder: cfg.rootOrder,
       });
     }
+    while (queue.length > 0) {
+      const current = queue.shift();
+      if (!visibleSet.has(current.id)) continue;
+      if (lineSet.has(current.id)) continue;
+      const known = placement.get(current.id);
+      if (known && known.depth <= current.depth) continue;
+      placement.set(current.id, current);
+      const node = nodeById(current.id);
+      if (!node) continue;
+      const nextChildren = node.children
+        .filter((childId) => visibleSet.has(childId) && !lineSet.has(childId))
+        .sort((a, b) => {
+          const na = nodeById(a);
+          const nb = nodeById(b);
+          if (!na || !nb) return 0;
+          return na.order - nb.order;
+        });
+      for (const childId of nextChildren) {
+        queue.push({
+          id: childId,
+          side: current.side,
+          lane: current.lane,
+          depth: current.depth + 1,
+          rootLineageId: current.rootLineageId,
+          rootOrder: current.rootOrder,
+        });
+      }
+    }
+    const baseGap = 118;
+    const laneGap = 112;
+    const depthDrift = 14;
+    for (const [nodeId, cfg] of placement.entries()) {
+      const ele = cy.getElementById(nodeId);
+      if (!ele || ele.length === 0) continue;
+      const laneDistance = baseGap + cfg.lane * laneGap + Math.max(0, cfg.depth - 1) * depthDrift;
+      const rootBias = ((cfg.rootOrder % 3) - 1) * 10;
+      const targetX = centerX + cfg.side * laneDistance + rootBias;
+      const targetY = ele.position("y");
+      if (animate) {
+        ele.animate({ position: { x: targetX, y: targetY } }, { duration: 200, easing: "ease-out-cubic" });
+      } else {
+        ele.position({ x: targetX, y: targetY });
+      }
+    }
   }
-
   function enforcePrimaryAxisClearance(nodeIds, primaryLineIds, centerId, animate) {
     if (!primaryLineIds || primaryLineIds.size === 0) return;
     const visibleIds = nodeIds || new Set();
