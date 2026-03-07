@@ -16,7 +16,7 @@
   const autoZoomToggle = document.getElementById("autoZoomToggle");
   const fullCollapseToggle = document.getElementById("fullCollapseToggle");
 
-  const APP_VERSION = "v2026.03.07-21";
+  const APP_VERSION = "v2026.03.07-22";
 
   if (versionBadge) {
     versionBadge.textContent = `版本 ${APP_VERSION}`;
@@ -882,6 +882,50 @@
     }
   }
 
+  function enforcePrimaryAxisClearance(nodeIds, primaryLineIds, centerId, animate) {
+    if (!primaryLineIds || primaryLineIds.size === 0) return;
+    const visibleIds = nodeIds || new Set();
+    const lineSet = new Set([...primaryLineIds].filter((id) => visibleIds.has(id)));
+    if (lineSet.size === 0) return;
+    const centerEle = cy.getElementById(centerId);
+    if (!centerEle || centerEle.length === 0) return;
+    const centerX = centerEle.position("x");
+    for (const nodeId of visibleIds) {
+      if (lineSet.has(nodeId)) continue;
+      const ele = cy.getElementById(nodeId);
+      if (!ele || ele.length === 0) continue;
+      const currentX = ele.position("x");
+      const baseClearance = Math.max(82, Math.round(ele.width() * 0.92));
+      const distanceToAxis = Math.abs(currentX - centerX);
+      if (distanceToAxis >= baseClearance) continue;
+      const node = nodeById(nodeId);
+      let dir = currentX >= centerX ? 1 : -1;
+      if (Math.abs(currentX - centerX) < 0.1) {
+        dir = node && node.order % 2 === 0 ? 1 : -1;
+      }
+      if (node) {
+        const parentOnLine = node.parents.find((pid) => lineSet.has(pid));
+        if (parentOnLine) {
+          const parentEle = cy.getElementById(parentOnLine);
+          if (parentEle && parentEle.length > 0) {
+            const delta = currentX - parentEle.position("x");
+            if (Math.abs(delta) > 0.1) {
+              dir = delta >= 0 ? 1 : -1;
+            }
+          }
+        }
+      }
+      const nodeDegree = node ? node.parents.length + node.children.length : 0;
+      const extraBand = Math.min(3, Math.max(0, nodeDegree - 1));
+      const targetX = centerX + dir * (baseClearance + extraBand * 18);
+      const targetY = ele.position("y");
+      if (animate) {
+        ele.animate({ position: { x: targetX, y: targetY } }, { duration: 180, easing: "ease-out-cubic" });
+      } else {
+        ele.position({ x: targetX, y: targetY });
+      }
+    }
+  }
   function resolveNodeCollisions(nodeIds, lockedIds, animate) {
     const lockSet = lockedIds || new Set();
     const nodeElements = [];
@@ -1268,13 +1312,18 @@
 
     layout.on("layoutstop", () => {
       const lockedLineIds = new Set([...primaryLineIds].filter((id) => nodeIdSet.has(id)));
-
+      const postAdjustAnimate = false;
       if (keepLineCentered && lockedLineIds.size > 0) {
-        alignPrimaryLine(nodeIdSet, primaryLineIds, centerId, animate);
-        rebalanceSideBranches(nodeIdSet, lockedLineIds, animate);
+        alignPrimaryLine(nodeIdSet, primaryLineIds, centerId, postAdjustAnimate);
+        rebalanceSideBranches(nodeIdSet, lockedLineIds, postAdjustAnimate);
+        enforcePrimaryAxisClearance(nodeIdSet, lockedLineIds, centerId, postAdjustAnimate);
       }
-      separateCoincidentNodes(nodeIdSet, lockedLineIds, animate);
-      resolveNodeCollisions(nodeIdSet, lockedLineIds, animate);
+      separateCoincidentNodes(nodeIdSet, lockedLineIds, postAdjustAnimate);
+      resolveNodeCollisions(nodeIdSet, lockedLineIds, postAdjustAnimate);
+      if (keepLineCentered && lockedLineIds.size > 0) {
+        alignPrimaryLine(nodeIdSet, primaryLineIds, centerId, false);
+        enforcePrimaryAxisClearance(nodeIdSet, lockedLineIds, centerId, false);
+      }
       updateVisibleEdgeCurves(nodeIdSet, edgeIdSet, lockedLineIds);
       if (animate) {
         scheduleVisibleEdgeCurveRefresh(nodeIdSet, edgeIdSet, lockedLineIds, 260);
@@ -1688,6 +1737,4 @@
   renderSearchResults("");
   setViewMode("family", { animate: false });
 })();
-
-
 
