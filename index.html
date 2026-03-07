@@ -27,13 +27,25 @@
       <aside class="panel">
         <h2>族譜操作</h2>
         <ul>
-          <li>拖曳空白處：平移視圖</li>
-          <li>滑鼠滾輪或雙指：縮放</li>
-          <li>點擊節點：高亮直系並重排成樹狀</li>
-          <li>點擊空白：取消選取高亮</li>
-          <li>可用右側姓名搜尋直接定位</li>
+          <li>預設為家系模式：上下各顯示 3 代</li>
+          <li>點擊節點：以該人為中心重排樹狀</li>
+          <li>旁系預設收合，可手動展開</li>
+          <li>拖曳空白處平移，滾輪或雙指縮放</li>
+          <li>可切換全圖模式做整體探索</li>
         </ul>
         <p id="focusInfo">目前：顯示全部族譜</p>
+
+        <section class="mode-block" aria-labelledby="modeTitle">
+          <h3 id="modeTitle">顯示模式</h3>
+          <div class="mode-switch">
+            <button id="familyModeBtn" class="mode-btn is-active" type="button">家系模式</button>
+            <button id="fullModeBtn" class="mode-btn" type="button">全圖模式</button>
+          </div>
+          <label class="side-branch-toggle" for="sideBranchToggle">
+            <input id="sideBranchToggle" type="checkbox" />
+            展開旁系分支
+          </label>
+        </section>
 
         <section class="search-block" aria-labelledby="searchTitle">
           <h3 id="searchTitle">關鍵字檢索</h3>

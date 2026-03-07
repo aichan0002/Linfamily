@@ -8,8 +8,11 @@
   const searchInput = document.getElementById("searchInput");
   const searchResults = document.getElementById("searchResults");
   const versionBadge = document.getElementById("versionBadge");
+  const familyModeBtn = document.getElementById("familyModeBtn");
+  const fullModeBtn = document.getElementById("fullModeBtn");
+  const sideBranchToggle = document.getElementById("sideBranchToggle");
 
-  const APP_VERSION = "v2026.03.07-09";
+  const APP_VERSION = "v2026.03.07-10";
 
   if (versionBadge) {
     versionBadge.textContent = `版本 ${APP_VERSION}`;
@@ -36,6 +39,8 @@
     { fill: "#253145", ring: "#a2e8c8" },
   ];
 
+  const FAMILY_UP_DEPTH = 3;
+  const FAMILY_DOWN_DEPTH = 3;
   const MIN_ZOOM = 0.08;
   const MAX_ZOOM = 2.8;
 
@@ -304,10 +309,16 @@
           "target-arrow-color": "data(arrowColor)",
           "target-arrow-shape": "vee",
           "arrow-scale": 0.95,
-          opacity: 0.93,
+          opacity: 0.92,
           "overlay-opacity": 0,
           "transition-property": "opacity, line-color, target-arrow-color",
           "transition-duration": "180ms",
+        },
+      },
+      {
+        selector: "node.mode-hidden, edge.mode-hidden",
+        style: {
+          display: "none",
         },
       },
       {
@@ -328,7 +339,7 @@
       {
         selector: "node.inactive",
         style: {
-          opacity: 0.2,
+          opacity: 0.3,
         },
       },
       {
@@ -343,13 +354,16 @@
       {
         selector: "edge.inactive",
         style: {
-          opacity: 0.12,
+          opacity: 0.16,
         },
       },
     ],
   });
 
+  let viewMode = "family";
+  let includeSideBranches = false;
   let focusedId = null;
+  let familyCenterId = null;
 
   function collectionFromIds(ids) {
     let collection = cy.collection();
@@ -360,6 +374,17 @@
       }
     }
     return collection;
+  }
+
+  function nodeById(id) {
+    return id ? nodeMap.get(id) : null;
+  }
+
+  function getDefaultCenterId() {
+    const ordered = nodes
+      .slice()
+      .sort((a, b) => a.col - b.col || a.order - b.order);
+    return ordered.length > 0 ? ordered[0].id : null;
   }
 
   function computeLineageSet(nodeId) {
@@ -392,165 +417,177 @@
     return lineage;
   }
 
-  function connectedComponentIds(startId) {
-    const visited = new Set([startId]);
-    const queue = [startId];
+  function collectFamilyView(centerId, upDepth, downDepth, withSideBranches) {
+    const centerNode = nodeMap.get(centerId);
+    if (!centerNode) {
+      return { visibleNodes: new Set(), visibleEdges: new Set(), coreLineageNodes: new Set() };
+    }
 
-    while (queue.length > 0) {
-      const currentId = queue.shift();
-      const neighbors = neighborMap.get(currentId);
-      if (!neighbors) continue;
+    const coreSet = new Set([centerId]);
 
-      for (const nextId of neighbors) {
-        if (visited.has(nextId)) continue;
-        visited.add(nextId);
-        queue.push(nextId);
+    const upQueue = [{ id: centerId, d: 0 }];
+    while (upQueue.length > 0) {
+      const current = upQueue.shift();
+      if (current.d >= upDepth) continue;
+
+      const node = nodeMap.get(current.id);
+      if (!node) continue;
+
+      for (const parentId of node.parents) {
+        if (!coreSet.has(parentId)) {
+          coreSet.add(parentId);
+        }
+        upQueue.push({ id: parentId, d: current.d + 1 });
       }
     }
 
-    return visited;
+    const downQueue = [{ id: centerId, d: 0 }];
+    while (downQueue.length > 0) {
+      const current = downQueue.shift();
+      if (current.d >= downDepth) continue;
+
+      const node = nodeMap.get(current.id);
+      if (!node) continue;
+
+      for (const childId of node.children) {
+        if (!coreSet.has(childId)) {
+          coreSet.add(childId);
+        }
+        downQueue.push({ id: childId, d: current.d + 1 });
+      }
+    }
+
+    const visibleNodes = new Set(coreSet);
+
+    if (withSideBranches) {
+      for (const coreId of coreSet) {
+        const coreNode = nodeMap.get(coreId);
+        if (!coreNode) continue;
+
+        for (const parentId of coreNode.parents) {
+          const parentNode = nodeMap.get(parentId);
+          if (!parentNode) continue;
+
+          visibleNodes.add(parentId);
+
+          for (const siblingId of parentNode.children) {
+            visibleNodes.add(siblingId);
+          }
+        }
+      }
+    }
+
+    const visibleEdges = new Set();
+    for (const edge of edges) {
+      if (visibleNodes.has(edge.source) && visibleNodes.has(edge.target)) {
+        visibleEdges.add(`${edge.source}->${edge.target}`);
+      }
+    }
+
+    return {
+      visibleNodes,
+      visibleEdges,
+      coreLineageNodes: coreSet,
+    };
   }
 
-  function topRootsInComponent(componentIds) {
+  function topRootsInSet(idSet) {
     const roots = [];
 
-    for (const nodeId of componentIds) {
+    for (const nodeId of idSet) {
       const node = nodeMap.get(nodeId);
       if (!node) continue;
 
-      const hasParentInComponent = node.parents.some((parentId) => componentIds.has(parentId));
-      if (!hasParentInComponent) {
+      const hasParentInSet = node.parents.some((parentId) => idSet.has(parentId));
+      if (!hasParentInSet) {
         roots.push(nodeId);
       }
     }
 
     if (roots.length > 0) {
       roots.sort((a, b) => {
-        const na = nodeMap.get(a);
-        const nb = nodeMap.get(b);
+        const na = nodeById(a);
+        const nb = nodeById(b);
         return na.col - nb.col || na.order - nb.order;
       });
       return roots;
     }
 
-    const fallback = [...componentIds].sort((a, b) => {
-      const na = nodeMap.get(a);
-      const nb = nodeMap.get(b);
+    const fallback = [...idSet].sort((a, b) => {
+      const na = nodeById(a);
+      const nb = nodeById(b);
       return na.col - nb.col || na.order - nb.order;
     });
     return fallback.slice(0, 1);
   }
 
-  function placeDetachedNodes(componentIds, duration = 0) {
-    const detachedNodes = nodes
-      .filter((node) => !componentIds.has(node.id))
-      .sort((a, b) => a.col - b.col || a.order - b.order);
-
-    if (detachedNodes.length === 0) return;
-
-    const componentCollection = collectionFromIds(componentIds);
-    const bb = componentCollection.length > 0
-      ? componentCollection.boundingBox({ includeLabels: true })
-      : { x1: -320, x2: 320, y1: -180 };
-
-    const sideBaseX = Math.max(440, (bb.x2 - bb.x1) / 2 + 280);
-    const sideStepX = 92;
-    const rowGap = 116;
-
-    for (let i = 0; i < detachedNodes.length; i += 1) {
-      const node = detachedNodes[i];
-      const ele = cy.getElementById(node.id);
-      if (!ele || ele.length === 0) continue;
-
-      const lane = Math.floor(i / 2);
-      const side = i % 2 === 0 ? -1 : 1;
-      const x = side * (sideBaseX + lane * sideStepX);
-      const y = (node.col - 1) * rowGap + ((lane % 3) - 1) * 24;
-
-      if (duration > 0) {
-        ele.animate({ position: { x, y } }, { duration, easing: "ease-out-cubic" });
-      } else {
-        ele.position({ x, y });
-      }
-    }
+  function clearAllStateClasses() {
+    cy.nodes().removeClass("lineage focused inactive mode-hidden");
+    cy.edges().removeClass("active inactive mode-hidden");
   }
 
-  function updateFocusInfo(lineageSize = 0) {
-    if (!focusInfo) return;
+  function applyVisibility(visibleNodeIds, visibleEdgeIds) {
+    const visibleNodes = visibleNodeIds || new Set();
+    const visibleEdges = visibleEdgeIds || new Set();
 
-    if (!focusedId) {
-      focusInfo.textContent = "目前：顯示全部族譜";
+    cy.nodes().forEach((n) => {
+      n.toggleClass("mode-hidden", !visibleNodes.has(n.id()));
+    });
+
+    cy.edges().forEach((e) => {
+      e.toggleClass("mode-hidden", !visibleEdges.has(e.id()));
+    });
+  }
+
+  function applyHighlight(focusNodeId, lineageNodes, visibleNodeIds, visibleEdgeIds) {
+    const hasFocus = Boolean(focusNodeId);
+    const lineage = lineageNodes || new Set();
+    const visibleNodes = visibleNodeIds || new Set();
+    const visibleEdges = visibleEdgeIds || new Set();
+
+    cy.nodes().forEach((n) => {
+      const id = n.id();
+      const isVisible = visibleNodes.has(id);
+      const isLineage = hasFocus && lineage.has(id);
+
+      n.toggleClass("lineage", isLineage);
+      n.toggleClass("inactive", isVisible && hasFocus && !isLineage);
+      n.toggleClass("focused", hasFocus && id === focusNodeId && isVisible);
+    });
+
+    cy.edges().forEach((e) => {
+      const isVisible = visibleEdges.has(e.id());
+      if (!isVisible) {
+        e.removeClass("active inactive");
+        return;
+      }
+
+      const src = e.data("source");
+      const tgt = e.data("target");
+      const isActive = hasFocus && lineage.has(src) && lineage.has(tgt);
+      e.toggleClass("active", isActive);
+      e.toggleClass("inactive", hasFocus && !isActive);
+    });
+  }
+
+  function runLayoutForNodeSet(nodeIdSet, animate, fitPadding, onDone) {
+    const nodeCollection = collectionFromIds(nodeIdSet);
+    if (nodeCollection.length === 0) {
+      if (typeof onDone === "function") onDone();
       return;
     }
 
-    const node = nodeMap.get(focusedId);
-    if (!node) {
-      focusInfo.textContent = "目前：顯示全部族譜";
-      return;
-    }
+    const roots = collectionFromIds(topRootsInSet(nodeIdSet));
 
-    focusInfo.textContent = `目前：已選取 ${node.label}（直系 ${Math.max(0, lineageSize - 1)} 人）`;
-  }
-
-  function clearFocusVisualOnly() {
-    focusedId = null;
-    cy.nodes().removeClass("focused lineage inactive");
-    cy.edges().removeClass("active inactive");
-    updateFocusInfo();
-  }
-
-  function runGlobalLayout(animate) {
-    const rootIds = nodes
-      .filter((node) => node.parents.length === 0)
-      .sort((a, b) => a.col - b.col || a.order - b.order)
-      .map((node) => node.id);
-
-    const roots = collectionFromIds(rootIds.length > 0 ? rootIds : [nodes[0].id]);
-
-    const layout = cy.layout({
-      name: "breadthfirst",
-      directed: true,
-      roots,
-      padding: 80,
-      spacingFactor: 1.12,
-      avoidOverlap: true,
-      animate,
-      animationDuration: animate ? 560 : 0,
-      sort: (a, b) => {
-        const colDelta = a.data("col") - b.data("col");
-        if (colDelta !== 0) return colDelta;
-        return a.data("order") - b.data("order");
-      },
-    });
-
-    layout.on("layoutstop", () => {
-      if (animate) {
-        cy.animate(
-          { fit: { eles: cy.elements(), padding: 90 } },
-          { duration: 460, easing: "ease-out-cubic" },
-        );
-      } else {
-        cy.fit(cy.elements(), 90);
-      }
-    });
-
-    layout.run();
-  }
-
-  function runFocusLayout(nodeId) {
-    const componentIds = connectedComponentIds(nodeId);
-    const componentNodes = collectionFromIds(componentIds);
-    const roots = collectionFromIds(topRootsInComponent(componentIds));
-
-    const layout = componentNodes.layout({
+    const layout = nodeCollection.layout({
       name: "breadthfirst",
       directed: true,
       roots,
       padding: 70,
-      spacingFactor: 1.1,
+      spacingFactor: 1.08,
       avoidOverlap: true,
-      animate: true,
-      animationDuration: 540,
+      animate,
+      animationDuration: animate ? 480 : 0,
       sort: (a, b) => {
         const colDelta = a.data("col") - b.data("col");
         if (colDelta !== 0) return colDelta;
@@ -559,54 +596,196 @@
     });
 
     layout.on("layoutstop", () => {
-      placeDetachedNodes(componentIds, 420);
-      cy.animate(
-        { fit: { eles: componentNodes, padding: 96 } },
-        { duration: 480, easing: "ease-out-cubic" },
-      );
+      const visibleEles = nodeCollection.union(nodeCollection.connectedEdges());
+      if (animate) {
+        cy.animate(
+          { fit: { eles: visibleEles, padding: fitPadding } },
+          { duration: 380, easing: "ease-out-cubic" },
+        );
+      } else {
+        cy.fit(visibleEles, fitPadding);
+      }
+
+      if (typeof onDone === "function") {
+        onDone();
+      }
     });
 
     layout.run();
   }
 
-  function applyFocus(nodeId, relayout = true) {
-    const node = nodeMap.get(nodeId);
-    if (!node) return;
+  function updateModeButtons() {
+    if (familyModeBtn) {
+      familyModeBtn.classList.toggle("is-active", viewMode === "family");
+    }
+    if (fullModeBtn) {
+      fullModeBtn.classList.toggle("is-active", viewMode === "full");
+    }
+    if (sideBranchToggle) {
+      sideBranchToggle.checked = includeSideBranches;
+      sideBranchToggle.disabled = viewMode !== "family";
+    }
+  }
+
+  function updateFocusInfo(lineageCount, visibleCount, centerId) {
+    if (!focusInfo) return;
+
+    if (viewMode === "family") {
+      const centerNode = nodeById(centerId || familyCenterId);
+      const centerText = centerNode ? centerNode.label : "-";
+
+      if (!focusedId) {
+        focusInfo.textContent = `目前：家系模式（中心 ${centerText}，上下各 ${FAMILY_UP_DEPTH} 代，顯示 ${visibleCount || 0} 人）`;
+        return;
+      }
+
+      const focusedNode = nodeById(focusedId);
+      const focusText = focusedNode ? focusedNode.label : centerText;
+      focusInfo.textContent = `目前：家系模式，已選取 ${focusText}（可視直系 ${Math.max(0, (lineageCount || 0) - 1)} 人）`;
+      return;
+    }
+
+    if (!focusedId) {
+      focusInfo.textContent = "目前：全圖模式（未選取）";
+      return;
+    }
+
+    const focusedNode = nodeById(focusedId);
+    focusInfo.textContent = focusedNode
+      ? `目前：全圖模式，已選取 ${focusedNode.label}（直系 ${Math.max(0, (lineageCount || 0) - 1)} 人）`
+      : "目前：全圖模式（未選取）";
+  }
+
+  function renderFamilyView(animateLayout) {
+    const centerId = familyCenterId || focusedId || getDefaultCenterId();
+    if (!centerId) return;
+
+    familyCenterId = centerId;
+
+    const familyView = collectFamilyView(
+      centerId,
+      FAMILY_UP_DEPTH,
+      FAMILY_DOWN_DEPTH,
+      includeSideBranches,
+    );
+
+    const visibleNodeIds = familyView.visibleNodes;
+    const visibleEdgeIds = familyView.visibleEdges;
+
+    applyVisibility(visibleNodeIds, visibleEdgeIds);
+
+    const lineage = focusedId
+      ? new Set([...familyView.coreLineageNodes].filter((id) => visibleNodeIds.has(id)))
+      : new Set();
+
+    applyHighlight(focusedId, lineage, visibleNodeIds, visibleEdgeIds);
+
+    runLayoutForNodeSet(visibleNodeIds, animateLayout, 92, () => {
+      updateFocusInfo(lineage.size, visibleNodeIds.size, centerId);
+    });
+  }
+
+  function renderFullView(animateLayout, centerOnFocused) {
+    const allNodeIds = new Set(nodes.map((node) => node.id));
+    const allEdgeIds = new Set(edges.map((edge) => `${edge.source}->${edge.target}`));
+
+    applyVisibility(allNodeIds, allEdgeIds);
+
+    const lineage = focusedId ? computeLineageSet(focusedId) : new Set();
+    applyHighlight(focusedId, lineage, allNodeIds, allEdgeIds);
+
+    if (animateLayout) {
+      runLayoutForNodeSet(allNodeIds, true, 90, () => {
+        if (centerOnFocused && focusedId) {
+          const focusNode = cy.getElementById(focusedId);
+          if (focusNode && focusNode.length > 0) {
+            cy.animate(
+              { fit: { eles: focusNode, padding: 170 } },
+              { duration: 260, easing: "ease-out-cubic" },
+            );
+          }
+        }
+        updateFocusInfo(lineage.size, allNodeIds.size, focusedId);
+      });
+      return;
+    }
+
+    if (centerOnFocused && focusedId) {
+      const focusNode = cy.getElementById(focusedId);
+      if (focusNode && focusNode.length > 0) {
+        cy.animate(
+          { fit: { eles: focusNode, padding: 170 } },
+          { duration: 260, easing: "ease-out-cubic" },
+        );
+      }
+    }
+
+    updateFocusInfo(lineage.size, allNodeIds.size, focusedId);
+  }
+
+  function renderCurrentView(options = {}) {
+    const {
+      animate = true,
+      relayout = true,
+      centerOnFocused = true,
+    } = options;
+
+    clearAllStateClasses();
+    updateModeButtons();
+
+    if (viewMode === "family") {
+      renderFamilyView(relayout ? animate : false);
+    } else {
+      renderFullView(relayout ? animate : false, centerOnFocused && animate);
+    }
+  }
+
+  function setViewMode(mode, options = {}) {
+    if (mode !== "family" && mode !== "full") return;
+
+    viewMode = mode;
+
+    if (viewMode === "family") {
+      if (!familyCenterId) {
+        familyCenterId = focusedId || getDefaultCenterId();
+      }
+      if (!focusedId) {
+        focusedId = familyCenterId;
+      }
+    }
+
+    renderCurrentView({
+      animate: options.animate !== false,
+      relayout: true,
+      centerOnFocused: true,
+    });
+  }
+
+  function focusNode(nodeId, options = {}) {
+    if (!nodeMap.has(nodeId)) return;
 
     focusedId = nodeId;
-    const lineageSet = computeLineageSet(nodeId);
+    familyCenterId = nodeId;
 
-    cy.nodes().forEach((n) => {
-      const id = n.id();
-      if (lineageSet.has(id)) {
-        n.removeClass("inactive");
-        n.addClass("lineage");
-      } else {
-        n.removeClass("lineage");
-        n.addClass("inactive");
+    renderCurrentView({
+      animate: options.animate !== false,
+      relayout: viewMode === "family",
+      centerOnFocused: true,
+    });
+  }
+
+  function clearSelection() {
+    focusedId = null;
+
+    if (viewMode === "family") {
+      if (!familyCenterId) {
+        familyCenterId = getDefaultCenterId();
       }
-    });
-
-    cy.edges().forEach((edge) => {
-      const active = lineageSet.has(edge.data("source")) && lineageSet.has(edge.data("target"));
-      edge.toggleClass("active", active);
-      edge.toggleClass("inactive", !active);
-    });
-
-    const focusedNodeEle = cy.getElementById(nodeId);
-    cy.nodes().removeClass("focused");
-    focusedNodeEle.addClass("focused");
-
-    updateFocusInfo(lineageSet.size);
-
-    if (relayout) {
-      runFocusLayout(nodeId);
-    } else {
-      cy.animate(
-        { fit: { eles: focusedNodeEle, padding: 160 } },
-        { duration: 280, easing: "ease-out-cubic" },
-      );
+      renderCurrentView({ animate: true, relayout: false, centerOnFocused: false });
+      return;
     }
+
+    renderCurrentView({ animate: false, relayout: false, centerOnFocused: false });
   }
 
   function renderSearchResults(keyword) {
@@ -658,7 +837,7 @@
       item.appendChild(info);
 
       item.addEventListener("click", () => {
-        applyFocus(node.id, true);
+        focusNode(node.id, { animate: true });
       });
 
       searchResults.appendChild(item);
@@ -688,19 +867,40 @@
   }
 
   cy.on("tap", "node", (event) => {
-    const nodeId = event.target.id();
-    applyFocus(nodeId, true);
+    focusNode(event.target.id(), { animate: true });
   });
 
   cy.on("tap", (event) => {
     if (event.target !== cy) return;
-    clearFocusVisualOnly();
+    clearSelection();
   });
+
+  if (familyModeBtn) {
+    familyModeBtn.addEventListener("click", () => {
+      setViewMode("family", { animate: true });
+    });
+  }
+
+  if (fullModeBtn) {
+    fullModeBtn.addEventListener("click", () => {
+      setViewMode("full", { animate: true });
+    });
+  }
+
+  if (sideBranchToggle) {
+    sideBranchToggle.addEventListener("change", () => {
+      includeSideBranches = Boolean(sideBranchToggle.checked);
+      if (viewMode === "family") {
+        renderCurrentView({ animate: true, relayout: true, centerOnFocused: true });
+      }
+    });
+  }
 
   if (resetBtn) {
     resetBtn.addEventListener("click", () => {
-      clearFocusVisualOnly();
-      runGlobalLayout(true);
+      focusedId = null;
+      familyCenterId = getDefaultCenterId();
+      renderCurrentView({ animate: true, relayout: true, centerOnFocused: false });
     });
   }
 
@@ -730,6 +930,10 @@
     });
   }
 
-  runGlobalLayout(false);
+  includeSideBranches = Boolean(sideBranchToggle?.checked);
+  familyCenterId = getDefaultCenterId();
+  focusedId = familyCenterId;
+
   renderSearchResults("");
+  setViewMode("family", { animate: false });
 })();
