@@ -16,7 +16,7 @@
   const autoZoomToggle = document.getElementById("autoZoomToggle");
   const fullCollapseToggle = document.getElementById("fullCollapseToggle");
 
-  const APP_VERSION = "v2026.03.07-27";
+  const APP_VERSION = "v2026.03.07-28";
 
   if (versionBadge) {
     versionBadge.textContent = `版本 ${APP_VERSION}`;
@@ -1543,9 +1543,9 @@
     }
 
     const pos = new Map();
-    const unitX = 128;
-    const unitY = 130;
-    const siblingGapUnits = 0.95;
+    const unitX = 154;
+    const unitY = 156;
+    const siblingGapUnits = 1.06;
 
     let centerAxisIndex = axisOrdered.indexOf(centerId);
     if (centerAxisIndex < 0) centerAxisIndex = Math.floor(axisOrdered.length / 2);
@@ -1600,24 +1600,76 @@
     for (const axisId of axisOrdered) {
       const axisPos = pos.get(axisId);
       if (!axisPos) continue;
-      const familyChildren = (childrenByNode.get(axisId) || []).filter((cid) => !axisSet.has(cid));
+      const allChildren = childrenByNode.get(axisId) || [];
+      const familyChildren = allChildren.filter((cid) => !axisSet.has(cid));
       if (familyChildren.length === 0) continue;
 
-      const widths = familyChildren.map((cid) => subtreeWidth(cid));
-      let total = 0;
-      for (let i = 0; i < widths.length; i += 1) {
-        total += widths[i];
-        if (i < widths.length - 1) total += siblingGapUnits;
+      const trunkIndex = allChildren.findIndex((cid) => axisSet.has(cid));
+      const leftChildren = [];
+      const rightChildren = [];
+
+      if (trunkIndex >= 0) {
+        for (let i = 0; i < allChildren.length; i += 1) {
+          const cid = allChildren[i];
+          if (axisSet.has(cid)) continue;
+          if (i < trunkIndex) {
+            leftChildren.push(cid);
+          } else {
+            rightChildren.push(cid);
+          }
+        }
+      } else {
+        const half = Math.floor(familyChildren.length / 2);
+        for (let i = 0; i < familyChildren.length; i += 1) {
+          if (i < half) {
+            leftChildren.push(familyChildren[i]);
+          } else {
+            rightChildren.push(familyChildren[i]);
+          }
+        }
       }
 
-      let cursor = axisPos.x - (total * unitX) / 2;
-      for (let i = 0; i < familyChildren.length; i += 1) {
-        const block = widths[i] * unitX;
-        const childX = cursor + block / 2;
-        const childY = axisPos.y + unitY;
-        placeBranch(familyChildren[i], childX, childY);
-        cursor += block + siblingGapUnits * unitX;
+      if (leftChildren.length === 0 && rightChildren.length === 0) {
+        rightChildren.push(...familyChildren);
       }
+
+      const placeAxisSide = (childIds, side) => {
+        if (childIds.length === 0) return;
+
+        const widths = childIds.map((cid) => subtreeWidth(cid));
+        let total = 0;
+        for (let i = 0; i < widths.length; i += 1) {
+          total += widths[i];
+          if (i < widths.length - 1) total += siblingGapUnits;
+        }
+
+        const sideGap = unitX * 1.12;
+        let cursor = side === "left"
+          ? axisPos.x - sideGap - total * unitX
+          : axisPos.x + sideGap;
+
+        for (let i = 0; i < childIds.length; i += 1) {
+          const block = widths[i] * unitX;
+          const childX = cursor + block / 2;
+          const childY = axisPos.y + unitY;
+          placeBranch(childIds[i], childX, childY);
+          cursor += block + siblingGapUnits * unitX;
+        }
+      };
+
+      placeAxisSide(leftChildren, "left");
+      placeAxisSide(rightChildren, "right");
+    }
+
+    const axisClearance = unitX * 0.84;
+    for (const [nodeId, p] of pos.entries()) {
+      if (axisSet.has(nodeId)) continue;
+      if (Math.abs(p.x) >= axisClearance) continue;
+      const node = nodeById(nodeId);
+      const dir = Math.abs(p.x) < 0.1
+        ? (node && node.order % 2 === 0 ? 1 : -1)
+        : (p.x >= 0 ? 1 : -1);
+      p.x = dir * axisClearance;
     }
 
     let spillX = unitX * 4;
@@ -1688,10 +1740,7 @@
         const lockedLineIds = new Set([...primaryLineIds].filter((id) => nodeIdSet.has(id)));
         if (keepLineCentered && lockedLineIds.size > 0) {
           alignPrimaryLine(nodeIdSet, primaryLineIds, centerId, false);
-          enforcePrimaryAxisClearance(nodeIdSet, lockedLineIds, centerId, false);
         }
-        separateCoincidentNodes(nodeIdSet, lockedLineIds, false);
-        resolveNodeCollisions(nodeIdSet, lockedLineIds, false);
         updateVisibleEdgeCurves(nodeIdSet, edgeIdSet, lockedLineIds);
         applyViewport();
       };
@@ -2164,5 +2213,4 @@
   renderSearchResults("");
   setViewMode("family", { animate: false });
 })();
-
 
