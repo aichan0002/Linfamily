@@ -14,8 +14,9 @@
   const familyTreeBtn = document.getElementById("familyTreeBtn");
   const familyRadialBtn = document.getElementById("familyRadialBtn");
   const autoZoomToggle = document.getElementById("autoZoomToggle");
+  const fullCollapseToggle = document.getElementById("fullCollapseToggle");
 
-  const APP_VERSION = "v2026.03.07-15";
+  const APP_VERSION = "v2026.03.07-16";
 
   if (versionBadge) {
     versionBadge.textContent = `版本 ${APP_VERSION}`;
@@ -279,6 +280,8 @@
     maxZoom: MAX_ZOOM,
     wheelSensitivity: 0.2,
     selectionType: "single",
+    boxSelectionEnabled: false,
+    autounselectify: true,
     style: [
       {
         selector: "node",
@@ -301,6 +304,22 @@
           "overlay-opacity": 0,
           "transition-property": "opacity, border-width, border-color, background-color",
           "transition-duration": "180ms",
+        },
+      },
+      {
+        selector: "node:selected",
+        style: {
+          "border-width": 2,
+          "border-color": "data(ring)",
+          "overlay-opacity": 0,
+          "underlay-opacity": 0,
+        },
+      },
+      {
+        selector: "edge:selected",
+        style: {
+          "overlay-opacity": 0,
+          "underlay-opacity": 0,
         },
       },
       {
@@ -367,6 +386,7 @@
   let includeSideBranches = false;
   let familyLayoutStyle = "tree";
   let autoZoomOnFocus = true;
+  let collapseMinorInFull = true;
   let focusedId = null;
   let familyCenterId = null;
 
@@ -575,6 +595,66 @@
     };
   }
 
+
+  function collectFullView(withCollapsedLeaves, focusNodeId) {
+    const allNodeIds = new Set(nodes.map((node) => node.id));
+    if (!withCollapsedLeaves) {
+      return {
+        visibleNodes: allNodeIds,
+        visibleEdges: new Set(edges.map((edge) => `${edge.source}->${edge.target}`)),
+      };
+    }
+
+    const visibleNodes = new Set();
+    for (const node of nodes) {
+      const isRoot = node.parents.length === 0;
+      const hasChildren = node.children.length > 0;
+      const isBranching = node.children.length >= 2 || node.parents.length >= 2;
+      const isEarlyGeneration = node.col <= 4;
+
+      if (isRoot || hasChildren || isBranching || isEarlyGeneration) {
+        visibleNodes.add(node.id);
+      }
+    }
+
+    if (focusNodeId && nodeMap.has(focusNodeId)) {
+      const lineage = computeLineageSet(focusNodeId);
+      for (const lineageId of lineage) {
+        visibleNodes.add(lineageId);
+      }
+
+      const queue = [{ id: focusNodeId, depth: 0 }];
+      const visited = new Set([focusNodeId]);
+      while (queue.length > 0) {
+        const current = queue.shift();
+        if (current.depth >= 1) continue;
+
+        const neighbors = neighborMap.get(current.id);
+        if (!neighbors) continue;
+
+        for (const nextId of neighbors) {
+          visibleNodes.add(nextId);
+          if (visited.has(nextId)) continue;
+          visited.add(nextId);
+          queue.push({ id: nextId, depth: current.depth + 1 });
+        }
+      }
+    }
+
+    if (visibleNodes.size === 0) {
+      for (const nodeId of allNodeIds) visibleNodes.add(nodeId);
+    }
+
+    const visibleEdges = new Set();
+    for (const edge of edges) {
+      if (visibleNodes.has(edge.source) && visibleNodes.has(edge.target)) {
+        visibleEdges.add(`${edge.source}->${edge.target}`);
+      }
+    }
+
+    return { visibleNodes, visibleEdges };
+  }
+
   function distanceMapFromCenter(centerId, allowedNodeIds) {
     const distMap = new Map();
     if (!centerId || !allowedNodeIds || !allowedNodeIds.has(centerId)) {
@@ -600,6 +680,7 @@
 
     return distMap;
   }
+
   function computePrimaryLine(centerId, upDepth = Number.POSITIVE_INFINITY, downDepth = Number.POSITIVE_INFINITY) {
     const centerNode = nodeById(centerId);
     if (!centerNode) return new Set();
@@ -659,9 +740,36 @@
         ele.position({ x: centerX, y: ele.position("y") });
       }
     }
-
-
   }
+
+  function separateCoincidentNodes(nodeIds, animate) {
+    const buckets = new Map();
+
+    for (const nodeId of nodeIds) {
+      const ele = cy.getElementById(nodeId);
+      if (!ele || ele.length === 0) continue;
+      const pos = ele.position();
+      const key = `${Math.round(pos.x)}:${Math.round(pos.y)}`;
+      if (!buckets.has(key)) buckets.set(key, []);
+      buckets.get(key).push(ele);
+    }
+
+    for (const entries of buckets.values()) {
+      if (entries.length <= 1) continue;
+
+      const offsetBase = 18;
+      const center = (entries.length - 1) / 2;
+      entries.forEach((ele, idx) => {
+        const targetY = ele.position("y") + (idx - center) * offsetBase;
+        if (animate) {
+          ele.animate({ position: { x: ele.position("x"), y: targetY } }, { duration: 220, easing: "ease-out-cubic" });
+        } else {
+          ele.position({ x: ele.position("x"), y: targetY });
+        }
+      });
+    }
+  }
+
   function topRootsInSet(idSet) {
     const roots = [];
 
@@ -770,22 +878,25 @@
         fit: false,
         animate,
         animationDuration: animate ? 520 : 0,
-        padding: 70,
-        spacingFactor: 1.16,
+        padding: 76,
+        spacingFactor: 1.3,
         avoidOverlap: true,
-        minNodeSpacing: 16,
+        avoidOverlapPadding: 20,
+        minNodeSpacing: 34,
+        nodeDimensionsIncludeLabels: true,
+        equidistant: true,
         startAngle: -Math.PI / 2,
         clockwise: true,
-        sweep: Math.PI * 2,
+        sweep: Math.PI * 1.92,
         concentric: (ele) => {
           const id = ele.id();
           const dist = distMap.has(id) ? distMap.get(id) : 99;
           const node = nodeById(id);
           const degree = node ? node.parents.length + node.children.length : 0;
-          const lineageBoost = lineageSet.has(id) ? 4 : 0;
-          return 120 - dist * 16 + lineageBoost + Math.min(4, degree * 0.4);
+          const lineageBoost = lineageSet.has(id) ? 36 : 0;
+          return 1000 - dist * 100 + lineageBoost + Math.min(26, degree * 2);
         },
-        levelWidth: () => 16,
+        levelWidth: () => 100,
         sort: (a, b) => a.data("order") - b.data("order"),
       });
     } else {
@@ -794,9 +905,11 @@
         name: "breadthfirst",
         directed: true,
         roots,
-        padding: 70,
-        spacingFactor: 1.08,
+        padding: 74,
+        spacingFactor: 1.18,
         avoidOverlap: true,
+        avoidOverlapPadding: 18,
+        nodeDimensionsIncludeLabels: true,
         animate,
         animationDuration: animate ? 480 : 0,
         sort: (a, b) => {
@@ -811,6 +924,7 @@
       if (keepLineCentered) {
         alignPrimaryLine(nodeIdSet, primaryLineIds, centerId, animate);
       }
+      separateCoincidentNodes(nodeIdSet, animate);
 
       const visibleEles = nodeCollection.union(edgeCollection);
       if (autoFit) {
@@ -851,6 +965,10 @@
     if (familyRadialBtn) {
       familyRadialBtn.classList.toggle("is-active", familyLayoutStyle === "radial");
     }
+    if (fullCollapseToggle) {
+      fullCollapseToggle.checked = collapseMinorInFull;
+      fullCollapseToggle.disabled = viewMode !== "full";
+    }
     if (autoZoomToggle) {
       autoZoomToggle.checked = autoZoomOnFocus;
     }
@@ -875,17 +993,18 @@
       return;
     }
 
+    const foldText = collapseMinorInFull ? "末梢已折疊" : "完整";
+
     if (!focusedId) {
-      focusInfo.textContent = "目前：全圖模式（未選取）";
+      focusInfo.textContent = `目前：全圖模式（${foldText}，未選取）`;
       return;
     }
 
     const focusedNode = nodeById(focusedId);
     focusInfo.textContent = focusedNode
-      ? `目前：全圖模式，已選取 ${focusedNode.label}（直系 ${Math.max(0, (lineageCount || 0) - 1)} 人）`
-      : "目前：全圖模式（未選取）";
+      ? `目前：全圖模式（${foldText}），已選取 ${focusedNode.label}（直系 ${Math.max(0, (lineageCount || 0) - 1)} 人）`
+      : `目前：全圖模式（${foldText}，未選取）`;
   }
-
   function renderFamilyView(animateLayout, centerOnFocused) {
     const centerId = familyCenterId || focusedId || getDefaultCenterId();
     if (!centerId) return;
@@ -926,19 +1045,22 @@
   }
 
   function renderFullView(animateLayout, centerOnFocused) {
-    const allNodeIds = new Set(nodes.map((node) => node.id));
-    const allEdgeIds = new Set(edges.map((edge) => `${edge.source}->${edge.target}`));
+    const fullView = collectFullView(collapseMinorInFull, focusedId);
+    const visibleNodeIds = fullView.visibleNodes;
+    const visibleEdgeIds = fullView.visibleEdges;
 
-    applyVisibility(allNodeIds, allEdgeIds);
+    applyVisibility(visibleNodeIds, visibleEdgeIds);
 
-    const lineage = focusedId ? computeLineageSet(focusedId) : new Set();
+    const lineage = focusedId
+      ? new Set([...computeLineageSet(focusedId)].filter((id) => visibleNodeIds.has(id)))
+      : new Set();
     const primaryLineIds = focusedId ? computePrimaryLine(focusedId) : new Set();
 
-    applyHighlight(focusedId, lineage, allNodeIds, allEdgeIds);
+    applyHighlight(focusedId, lineage, visibleNodeIds, visibleEdgeIds);
 
     if (animateLayout) {
-      runLayoutForNodeSet(allNodeIds, allEdgeIds, true, 90, {
-        layoutType: familyLayoutStyle,
+      runLayoutForNodeSet(visibleNodeIds, visibleEdgeIds, true, 92, {
+        layoutType: "tree",
         centerId: focusedId,
         lineageSet: lineage,
         primaryLineIds,
@@ -946,16 +1068,16 @@
         centerOnFocused,
         autoFit: autoZoomOnFocus,
       }, () => {
-        updateFocusInfo(lineage.size, allNodeIds.size, focusedId);
+        updateFocusInfo(lineage.size, visibleNodeIds.size, focusedId);
       });
       return;
     }
 
     if (centerOnFocused && focusedId && autoZoomOnFocus) {
-      applyFocusViewport(focusedId, allNodeIds, lineage, 114, true, collectionFromIds(allNodeIds));
+      applyFocusViewport(focusedId, visibleNodeIds, lineage, 118, true, collectionFromIds(visibleNodeIds));
     }
 
-    updateFocusInfo(lineage.size, allNodeIds.size, focusedId);
+    updateFocusInfo(lineage.size, visibleNodeIds.size, focusedId);
   }
 
   function renderCurrentView(options = {}) {
@@ -1132,8 +1254,11 @@
 
   if (familyRadialBtn) {
     familyRadialBtn.addEventListener("click", () => {
-      if (familyLayoutStyle === "radial") return;
       familyLayoutStyle = "radial";
+      if (viewMode !== "family") {
+        setViewMode("family", { animate: true });
+        return;
+      }
       renderCurrentView({ animate: true, relayout: true, centerOnFocused: true });
     });
   }
@@ -1147,6 +1272,16 @@
       }
     });
   }
+  if (fullCollapseToggle) {
+    fullCollapseToggle.addEventListener("change", () => {
+      collapseMinorInFull = Boolean(fullCollapseToggle.checked);
+      updateModeButtons();
+      if (viewMode === "full") {
+        renderCurrentView({ animate: true, relayout: true, centerOnFocused: true });
+      }
+    });
+  }
+
   if (sideBranchToggle) {
     sideBranchToggle.addEventListener("change", () => {
       includeSideBranches = Boolean(sideBranchToggle.checked);
@@ -1191,6 +1326,7 @@
   }
 
   includeSideBranches = Boolean(sideBranchToggle?.checked);
+  collapseMinorInFull = fullCollapseToggle ? Boolean(fullCollapseToggle.checked) : true;
   autoZoomOnFocus = autoZoomToggle ? Boolean(autoZoomToggle.checked) : true;
   familyCenterId = getDefaultCenterId();
   focusedId = familyCenterId;
@@ -1198,5 +1334,4 @@
   renderSearchResults("");
   setViewMode("family", { animate: false });
 })();
-
 
