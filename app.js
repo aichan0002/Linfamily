@@ -15,7 +15,7 @@
   const familyRadialBtn = document.getElementById("familyRadialBtn");
   const autoZoomToggle = document.getElementById("autoZoomToggle");
 
-  const APP_VERSION = "v2026.03.07-13";
+  const APP_VERSION = "v2026.03.07-14";
 
   if (versionBadge) {
     versionBadge.textContent = `版本 ${APP_VERSION}`;
@@ -592,24 +592,7 @@
       }
     }
 
-    const minOffset = 110;
-    for (const nodeId of nodeIds) {
-      if (primaryLineIds.has(nodeId)) continue;
-      const ele = cy.getElementById(nodeId);
-      if (!ele || ele.length === 0) continue;
 
-      const currentX = ele.position("x");
-      const delta = currentX - centerX;
-      if (Math.abs(delta) >= minOffset) continue;
-
-      const direction = delta >= 0 ? 1 : -1;
-      const targetX = centerX + direction * minOffset;
-      if (animate) {
-        ele.animate({ position: { x: targetX, y: ele.position("y") } }, { duration: 220, easing: "ease-out-cubic" });
-      } else {
-        ele.position({ x: targetX, y: ele.position("y") });
-      }
-    }
   }
   function topRootsInSet(idSet) {
     const roots = [];
@@ -1155,6 +1138,8 @@
   renderSearchResults("");
   setViewMode("family", { animate: false });
 })();
+
+
 
 
 
