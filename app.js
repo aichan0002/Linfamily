@@ -16,7 +16,7 @@
   const autoZoomToggle = document.getElementById("autoZoomToggle");
   const fullCollapseToggle = document.getElementById("fullCollapseToggle");
 
-  const APP_VERSION = "v2026.03.07-18";
+  const APP_VERSION = "v2026.03.07-19";
 
   if (versionBadge) {
     versionBadge.textContent = `版本 ${APP_VERSION}`;
@@ -740,7 +740,8 @@
     }
   }
 
-  function separateCoincidentNodes(nodeIds, animate) {
+  function separateCoincidentNodes(nodeIds, lockedIds, animate) {
+    const lockSet = lockedIds || new Set();
     const buckets = new Map();
 
     for (const nodeId of nodeIds) {
@@ -755,14 +756,64 @@
     for (const entries of buckets.values()) {
       if (entries.length <= 1) continue;
 
+      const movable = entries.filter((ele) => !lockSet.has(ele.id()));
+      if (movable.length === 0) continue;
+
+      const locked = entries.filter((ele) => lockSet.has(ele.id()));
+      const anchorY = locked.length > 0
+        ? locked.reduce((sum, ele) => sum + ele.position("y"), 0) / locked.length
+        : entries.reduce((sum, ele) => sum + ele.position("y"), 0) / entries.length;
+
       const offsetBase = 18;
-      const center = (entries.length - 1) / 2;
-      entries.forEach((ele, idx) => {
-        const targetY = ele.position("y") + (idx - center) * offsetBase;
+      const center = (movable.length - 1) / 2;
+      movable.forEach((ele, idx) => {
+        const targetY = anchorY + (idx - center) * offsetBase;
         if (animate) {
           ele.animate({ position: { x: ele.position("x"), y: targetY } }, { duration: 220, easing: "ease-out-cubic" });
         } else {
           ele.position({ x: ele.position("x"), y: targetY });
+        }
+      });
+    }
+  }
+
+  function rebalanceSideBranches(nodeIds, lockedIds, animate) {
+    const lockSet = lockedIds || new Set();
+    if (lockSet.size === 0) return;
+
+    const visibleSet = nodeIds || new Set();
+    const lineageNodes = [...lockSet]
+      .map((id) => nodeById(id))
+      .filter((node) => Boolean(node))
+      .sort((a, b) => a.col - b.col || a.order - b.order);
+
+    for (const lineageNode of lineageNodes) {
+      const parentEle = cy.getElementById(lineageNode.id);
+      if (!parentEle || parentEle.length === 0) continue;
+
+      const sideChildren = lineageNode.children
+        .filter((childId) => visibleSet.has(childId) && !lockSet.has(childId))
+        .map((childId) => cy.getElementById(childId))
+        .filter((ele) => ele && ele.length > 0)
+        .sort((a, b) => a.data("order") - b.data("order"));
+
+      if (sideChildren.length === 0) continue;
+
+      const parentX = parentEle.position("x");
+      const avgDeltaX = sideChildren.reduce((sum, ele) => sum + (ele.position("x") - parentX), 0) / sideChildren.length;
+      const firstDir = avgDeltaX < 0 ? -1 : 1;
+      const spacing = Math.max(96, Math.round(parentEle.width() * 0.95));
+
+      sideChildren.forEach((childEle, idx) => {
+        const ring = Math.floor(idx / 2) + 1;
+        const dir = idx % 2 === 0 ? firstDir : -firstDir;
+        const targetX = parentX + dir * ring * spacing;
+        const targetY = childEle.position("y");
+
+        if (animate) {
+          childEle.animate({ position: { x: targetX, y: targetY } }, { duration: 220, easing: "ease-out-cubic" });
+        } else {
+          childEle.position({ x: targetX, y: targetY });
         }
       });
     }
@@ -1006,11 +1057,13 @@
     }
 
     layout.on("layoutstop", () => {
-      if (keepLineCentered) {
-        alignPrimaryLine(nodeIdSet, primaryLineIds, centerId, animate);
-      }
-      separateCoincidentNodes(nodeIdSet, animate);
       const lockedLineIds = new Set([...primaryLineIds].filter((id) => nodeIdSet.has(id)));
+
+      if (keepLineCentered && lockedLineIds.size > 0) {
+        alignPrimaryLine(nodeIdSet, primaryLineIds, centerId, animate);
+        rebalanceSideBranches(nodeIdSet, lockedLineIds, animate);
+      }
+      separateCoincidentNodes(nodeIdSet, lockedLineIds, animate);
       resolveNodeCollisions(nodeIdSet, lockedLineIds, animate);
 
       const visibleEles = nodeCollection.union(edgeCollection);
