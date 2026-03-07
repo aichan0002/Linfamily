@@ -16,7 +16,7 @@
   const autoZoomToggle = document.getElementById("autoZoomToggle");
   const fullCollapseToggle = document.getElementById("fullCollapseToggle");
 
-  const APP_VERSION = "v2026.03.07-29";
+  const APP_VERSION = "v2026.03.07-30";
 
   if (versionBadge) {
     versionBadge.textContent = `版本 ${APP_VERSION}`;
@@ -458,6 +458,7 @@
   let collapseMinorInFull = true;
   let focusedId = null;
   let familyCenterId = null;
+  let dragCascadeState = null;
 
   function collectionFromIds(ids) {
     let collection = cy.collection();
@@ -1692,6 +1693,7 @@
             id,
             x: point.x,
             size: n.size || 72,
+            order: n.order || 0,
             axis: axisSet.has(id),
           };
         })
@@ -1703,8 +1705,27 @@
         ? axisEntries.reduce((sum, e) => sum + e.x, 0) / axisEntries.length
         : 0;
 
-      const left = entries.filter((e) => !e.axis && e.x < axisX).sort((a, b) => b.x - a.x);
-      const right = entries.filter((e) => !e.axis && e.x >= axisX).sort((a, b) => a.x - b.x);
+      const nonAxis = entries.filter((e) => !e.axis);
+      const left = nonAxis
+        .filter((e) => e.x < axisX - 1)
+        .sort((a, b) => (b.x - a.x) || (a.order - b.order));
+      const right = nonAxis
+        .filter((e) => e.x > axisX + 1)
+        .sort((a, b) => (a.x - b.x) || (a.order - b.order));
+      const centered = nonAxis
+        .filter((e) => Math.abs(e.x - axisX) <= 1)
+        .sort((a, b) => a.order - b.order);
+
+      for (const e of centered) {
+        if (left.length <= right.length) {
+          left.push(e);
+        } else {
+          right.push(e);
+        }
+      }
+
+      left.sort((a, b) => (b.x - a.x) || (a.order - b.order));
+      right.sort((a, b) => (a.x - b.x) || (a.order - b.order));
 
       let prevLeftX = axisX;
       let prevLeftSize = 0;
@@ -2172,6 +2193,105 @@
     );
   }
 
+  function collectVisibleDescendants(rootId) {
+    const descendants = [];
+    const queue = [rootId];
+    const visited = new Set([rootId]);
+
+    while (queue.length > 0) {
+      const currentId = queue.shift();
+      const node = nodeById(currentId);
+      if (!node) continue;
+
+      for (const childId of node.children) {
+        if (visited.has(childId)) continue;
+        visited.add(childId);
+
+        const childEle = cy.getElementById(childId);
+        if (!childEle || childEle.length === 0 || childEle.hasClass("mode-hidden")) continue;
+
+        descendants.push(childId);
+        queue.push(childId);
+      }
+    }
+
+    return descendants;
+  }
+
+  function collectVisibleStateForCurves() {
+    const nodeIds = new Set();
+    const edgeIds = new Set();
+
+    cy.nodes().forEach((ele) => {
+      if (!ele.hasClass("mode-hidden")) nodeIds.add(ele.id());
+    });
+    cy.edges().forEach((ele) => {
+      if (!ele.hasClass("mode-hidden")) edgeIds.add(ele.id());
+    });
+
+    return { nodeIds, edgeIds };
+  }
+
+  cy.on("grab", "node", (event) => {
+    if (viewMode !== "family" || familyLayoutStyle !== "tree") {
+      dragCascadeState = null;
+      return;
+    }
+
+    const rootEle = event.target;
+    const rootId = rootEle.id();
+    const descendantIds = collectVisibleDescendants(rootId);
+    const descendants = new Map();
+
+    for (const id of descendantIds) {
+      const ele = cy.getElementById(id);
+      if (!ele || ele.length === 0) continue;
+      const p = ele.position();
+      descendants.set(id, { x: p.x, y: p.y });
+    }
+
+    const rootPos = rootEle.position();
+    dragCascadeState = {
+      rootId,
+      rootStart: { x: rootPos.x, y: rootPos.y },
+      descendants,
+    };
+  });
+
+  cy.on("drag", "node", (event) => {
+    if (!dragCascadeState) return;
+    if (dragCascadeState.rootId !== event.target.id()) return;
+
+    const rootPos = event.target.position();
+    const dx = rootPos.x - dragCascadeState.rootStart.x;
+    const dy = rootPos.y - dragCascadeState.rootStart.y;
+
+    for (const [id, startPos] of dragCascadeState.descendants.entries()) {
+      const ele = cy.getElementById(id);
+      if (!ele || ele.length === 0 || ele.hasClass("mode-hidden")) continue;
+      ele.position({ x: startPos.x + dx, y: startPos.y + dy });
+    }
+
+    const visible = collectVisibleStateForCurves();
+    const centerId = familyCenterId || focusedId || getDefaultCenterId();
+    const primaryLine = centerId
+      ? computePrimaryLine(centerId, FAMILY_UP_DEPTH, FAMILY_DOWN_DEPTH)
+      : new Set();
+    updateVisibleEdgeCurves(visible.nodeIds, visible.edgeIds, primaryLine);
+  });
+
+  cy.on("free", "node", (event) => {
+    if (!dragCascadeState) return;
+    if (dragCascadeState.rootId !== event.target.id()) return;
+
+    const visible = collectVisibleStateForCurves();
+    const centerId = familyCenterId || focusedId || getDefaultCenterId();
+    const primaryLine = centerId
+      ? computePrimaryLine(centerId, FAMILY_UP_DEPTH, FAMILY_DOWN_DEPTH)
+      : new Set();
+    updateVisibleEdgeCurves(visible.nodeIds, visible.edgeIds, primaryLine);
+    dragCascadeState = null;
+  });
   cy.on("tap", "node", (event) => {
     focusNode(event.target.id(), { animate: true });
   });
@@ -2283,5 +2403,4 @@
   renderSearchResults("");
   setViewMode("family", { animate: false });
 })();
-
 
