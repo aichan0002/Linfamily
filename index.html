@@ -21,22 +21,17 @@
 
     <main class="graph-wrap">
       <section id="graphStage" class="graph-stage" aria-label="林氏忠孝堂族譜圖">
-        <svg id="graphSvg" role="img" aria-label="林氏忠孝堂族譜 Graph">
-          <g id="worldLayer">
-            <g id="edgeLayer"></g>
-            <g id="nodeLayer"></g>
-          </g>
-        </svg>
+        <div id="graphCanvas" role="img" aria-label="林氏忠孝堂族譜 Graph"></div>
       </section>
 
       <aside class="panel">
         <h2>族譜操作</h2>
         <ul>
           <li>拖曳空白處：平移視圖</li>
-          <li>拖曳節點：調整圖形佈局</li>
-          <li>滑鼠滾輪：縮放</li>
-          <li>手機可雙指縮放或用上方按鈕放大/縮小</li>
-          <li>點擊節點：高亮直系並自動置中</li>
+          <li>滑鼠滾輪或雙指：縮放</li>
+          <li>點擊節點：高亮直系並重排成樹狀</li>
+          <li>點擊空白：取消選取高亮</li>
+          <li>可用右側姓名搜尋直接定位</li>
         </ul>
         <p id="focusInfo">目前：顯示全部族譜</p>
 
@@ -51,6 +46,7 @@
     </main>
 
     <script src="./familyData.js"></script>
+    <script src="https://unpkg.com/cytoscape@3.30.4/dist/cytoscape.min.js"></script>
     <script src="./app.js"></script>
   </body>
 </html>

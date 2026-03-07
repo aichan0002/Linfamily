@@ -100,108 +100,11 @@ body {
     linear-gradient(180deg, #0f1825 0%, #111d2c 100%);
 }
 
-#graphSvg {
+#graphCanvas {
   width: 100%;
   height: 100%;
   display: block;
   touch-action: none;
-  cursor: grab;
-}
-
-#graphSvg.is-panning {
-  cursor: grabbing;
-}
-
-.graph-edge {
-  transition: opacity 120ms ease;
-}
-
-.graph-edge-line {
-  fill: none;
-  stroke: var(--edge-line, rgba(123, 138, 159, 0.66));
-  stroke-width: 1.9;
-  stroke-linecap: round;
-  vector-effect: non-scaling-stroke;
-  transition: stroke 140ms ease, opacity 140ms ease;
-}
-
-.graph-edge-arrow {
-  fill: none;
-  stroke: var(--edge-arrow, rgba(144, 162, 185, 0.8));
-  stroke-width: 1.9;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  vector-effect: non-scaling-stroke;
-  transition: stroke 140ms ease, opacity 140ms ease;
-}
-
-.graph-edge.active .graph-edge-line {
-  stroke: var(--edge-line-active, rgba(104, 239, 197, 0.95));
-}
-
-.graph-edge.active .graph-edge-arrow {
-  stroke: var(--edge-arrow-active, rgba(136, 255, 218, 0.98));
-}
-
-.graph-edge.inactive {
-  opacity: 0.16;
-}
-
-.graph-node {
-  cursor: pointer;
-  transition: opacity 120ms ease;
-  --node-fill: #1a2637;
-  --node-ring: #86d7be;
-  --node-halo: rgba(132, 229, 199, 0.24);
-}
-
-.graph-node .node-halo {
-  fill: var(--node-halo);
-  opacity: 0.3;
-  filter: blur(9px);
-}
-
-.graph-node .node-ring {
-  fill: none;
-  stroke: color-mix(in srgb, var(--node-ring) 75%, white 25%);
-  stroke-width: 2;
-}
-
-.graph-node .node-core {
-  fill: var(--node-fill);
-  stroke: rgba(225, 248, 255, 0.25);
-  stroke-width: 1;
-}
-
-.graph-node text {
-  fill: #f4fffb;
-  text-anchor: middle;
-  user-select: none;
-  pointer-events: none;
-}
-
-.graph-node .name {
-  dominant-baseline: middle;
-  font-size: 14px;
-  font-weight: 650;
-}
-
-.graph-node .note {
-  font-size: 11px;
-  opacity: 0.86;
-}
-
-.graph-node.focused .node-ring {
-  stroke: #ccffee;
-  stroke-width: 2.8;
-}
-
-.graph-node.focused .node-halo {
-  opacity: 0.68;
-}
-
-.graph-node.inactive {
-  opacity: 0.24;
 }
 
 .panel {
@@ -378,4 +281,3 @@ body {
     padding: 12px;
   }
 }
-

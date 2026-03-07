@@ -1,10 +1,6 @@
 ﻿(() => {
   const stage = document.getElementById("graphStage");
-  const svg = document.getElementById("graphSvg");
-  const worldLayer = document.getElementById("worldLayer");
-  const edgeLayer = document.getElementById("edgeLayer");
-  const nodeLayer = document.getElementById("nodeLayer");
-
+  const graphCanvas = document.getElementById("graphCanvas");
   const focusInfo = document.getElementById("focusInfo");
   const resetBtn = document.getElementById("resetBtn");
   const zoomOutBtn = document.getElementById("zoomOutBtn");
@@ -13,7 +9,7 @@
   const searchResults = document.getElementById("searchResults");
   const versionBadge = document.getElementById("versionBadge");
 
-  const APP_VERSION = "v2026.03.07-08";
+  const APP_VERSION = "v2026.03.07-09";
 
   if (versionBadge) {
     versionBadge.textContent = `版本 ${APP_VERSION}`;
@@ -21,20 +17,27 @@
   document.title = `林氏忠孝堂族譜 ${APP_VERSION}`;
   console.info(`[Linfamily] ${APP_VERSION}`);
 
-  if (!stage || !svg || !worldLayer || !edgeLayer || !nodeLayer) {
+  if (!stage || !graphCanvas) {
     return;
   }
 
-  const MIN_SCALE = 0.08;
-  const MAX_SCALE = 2.7;
+  if (typeof window.cytoscape !== "function") {
+    if (focusInfo) {
+      focusInfo.textContent = "目前：圖形引擎載入失敗（請確認網路可連到 Cytoscape CDN）";
+    }
+    return;
+  }
 
   const NODE_TONES = [
-    { fill: "#1a2a3f", ring: "#74eac7", halo: "rgba(116,234,199,0.26)" },
-    { fill: "#222f47", ring: "#7bb4ff", halo: "rgba(123,180,255,0.24)" },
-    { fill: "#2a2d4c", ring: "#b89dff", halo: "rgba(184,157,255,0.24)" },
-    { fill: "#2a3f47", ring: "#7de4ff", halo: "rgba(125,228,255,0.24)" },
-    { fill: "#283044", ring: "#9ee8c7", halo: "rgba(158,232,199,0.24)" },
+    { fill: "#16273b", ring: "#7ce8ca" },
+    { fill: "#1d2a40", ring: "#81baff" },
+    { fill: "#242947", ring: "#b9a4ff" },
+    { fill: "#1f3640", ring: "#83e8ff" },
+    { fill: "#253145", ring: "#a2e8c8" },
   ];
+
+  const MIN_ZOOM = 0.08;
+  const MAX_ZOOM = 2.8;
 
   const columns = Array.isArray(window.FAMILY_COLUMNS)
     ? window.FAMILY_COLUMNS.map((column) => ({
@@ -50,13 +53,6 @@
     const text = String(value).trim();
     return text.length > 0 ? text : null;
   }
-
-  const tableRows = rawRows
-    .map((row) => {
-      const cells = Array.isArray(row) ? row : [];
-      return columns.map((_, index) => cleanCell(cells[index]));
-    })
-    .filter((row) => row.some((value) => Boolean(value)));
 
   function detectRootName(rows) {
     const counts = new Map();
@@ -77,6 +73,13 @@
     return selectedRoot;
   }
 
+  const tableRows = rawRows
+    .map((row) => {
+      const cells = Array.isArray(row) ? row : [];
+      return columns.map((_, index) => cleanCell(cells[index]));
+    })
+    .filter((row) => row.some((value) => Boolean(value)));
+
   const rootName = detectRootName(tableRows);
 
   const nodeMap = new Map();
@@ -94,11 +97,7 @@
         order: nodeOrder,
         parents: [],
         children: [],
-        x: 0,
-        y: 0,
-        vx: 0,
-        vy: 0,
-        r: 34,
+        size: 70,
       });
       nodeOrder += 1;
     }
@@ -165,15 +164,31 @@
   const nodes = [...nodeMap.values()];
   const edges = [...edgeMap.values()];
   const maxGenerationCol = Math.max(1, ...nodes.map((node) => node.col));
-  const neighborMap = new Map(nodes.map((node) => [node.id, new Set()]));
 
-  for (const edge of edges) {
-    if (neighborMap.has(edge.source)) {
-      neighborMap.get(edge.source).add(edge.target);
+  if (nodes.length === 0) {
+    if (focusInfo) {
+      focusInfo.textContent = "目前：找不到可顯示的族譜資料";
     }
-    if (neighborMap.has(edge.target)) {
-      neighborMap.get(edge.target).add(edge.source);
-    }
+    return;
+  }
+
+  function toneForCol(col) {
+    return NODE_TONES[Math.abs(col) % NODE_TONES.length];
+  }
+
+  function edgeToneForGeneration(col) {
+    const ratio = Math.max(0, Math.min(1, col / maxGenerationCol));
+    const hue = Math.round(28 + ratio * 198);
+    const sat = Math.round(76 - ratio * 34);
+    const light = Math.round(40 + ratio * 36);
+    const baseAlpha = 0.86 - ratio * 0.3;
+
+    return {
+      line: `hsla(${hue}, ${sat}%, ${light}%, ${baseAlpha.toFixed(3)})`,
+      arrow: `hsla(${hue}, ${Math.max(30, sat - 6)}%, ${Math.min(88, light + 6)}%, ${(baseAlpha + 0.06).toFixed(3)})`,
+      activeLine: `hsla(${hue}, ${Math.max(24, sat - 10)}%, ${Math.min(92, light + 20)}%, 0.98)`,
+      activeArrow: `hsla(${hue}, ${Math.max(22, sat - 12)}%, ${Math.min(94, light + 24)}%, 0.99)`,
+    };
   }
 
   for (const node of nodes) {
@@ -190,512 +205,16 @@
     }
 
     const degree = node.parents.length + node.children.length;
-    node.r = Math.max(28, Math.min(46, 22 + Math.ceil(node.label.length * 2.2 + degree * 1.4)));
+    const labelSizeBonus = Math.min(22, Math.ceil(node.label.length * 2.2));
+    const degreeBonus = Math.min(26, degree * 2);
+    const noteBonus = node.note ? 10 : 0;
+    node.size = Math.max(62, Math.min(112, 52 + labelSizeBonus + degreeBonus + noteBonus));
   }
 
-  function hashText(text) {
-    let hash = 0;
-    for (let i = 0; i < text.length; i += 1) {
-      hash = (hash * 33 + text.charCodeAt(i)) >>> 0;
-    }
-    return hash;
-  }
-
-  function toneForCol(col) {
-    return NODE_TONES[Math.abs(col) % NODE_TONES.length];
-  }
-
-  function edgeToneForGeneration(col) {
-    const ratio = Math.max(0, Math.min(1, col / maxGenerationCol));
-    const hue = Math.round(28 + ratio * 198);
-    const sat = Math.round(76 - ratio * 34);
-    const light = Math.round(40 + ratio * 36);
-    const baseAlpha = 0.84 - ratio * 0.26;
-
-    return {
-      line: `hsla(${hue}, ${sat}%, ${light}%, ${baseAlpha.toFixed(3)})`,
-      arrow: `hsla(${hue}, ${Math.max(30, sat - 6)}%, ${Math.min(88, light + 6)}%, ${(baseAlpha + 0.06).toFixed(3)})`,
-      activeLine: `hsla(${hue}, ${Math.max(26, sat - 10)}%, ${Math.min(90, light + 18)}%, 0.98)`,
-      activeArrow: `hsla(${hue}, ${Math.max(24, sat - 12)}%, ${Math.min(94, light + 24)}%, 0.99)`,
-    };
-  }
-
-  function initializeForceLayout() {
-    const count = Math.max(nodes.length, 1);
-    const radius = Math.max(240, Math.sqrt(count) * 74);
-
-    for (let i = 0; i < nodes.length; i += 1) {
-      const node = nodes[i];
-      const angle = (i / count) * Math.PI * 2;
-      const noise = (hashText(node.id) % 1000) / 1000 - 0.5;
-      node.x = Math.cos(angle) * radius + noise * 100;
-      node.y = Math.sin(angle) * radius + noise * 100;
-      node.vx = 0;
-      node.vy = 0;
-    }
-
-    const repulsion = 26500;
-    const spring = 0.014;
-    const idealLength = 158;
-    const centerPull = 0.0021;
-    const damping = 0.87;
-    const iterations = 190;
-
-    for (let iter = 0; iter < iterations; iter += 1) {
-      for (const node of nodes) {
-        node.fx = 0;
-        node.fy = 0;
-      }
-
-      for (let i = 0; i < nodes.length; i += 1) {
-        const a = nodes[i];
-        for (let j = i + 1; j < nodes.length; j += 1) {
-          const b = nodes[j];
-          const dx = b.x - a.x;
-          const dy = b.y - a.y;
-          const dist2 = dx * dx + dy * dy + 0.01;
-          const dist = Math.sqrt(dist2);
-          const force = repulsion / dist2;
-          const fx = (force * dx) / dist;
-          const fy = (force * dy) / dist;
-
-          a.fx -= fx;
-          a.fy -= fy;
-          b.fx += fx;
-          b.fy += fy;
-        }
-      }
-
-      for (const edge of edges) {
-        const sourceNode = nodeMap.get(edge.source);
-        const targetNode = nodeMap.get(edge.target);
-        if (!sourceNode || !targetNode) continue;
-
-        const dx = targetNode.x - sourceNode.x;
-        const dy = targetNode.y - sourceNode.y;
-        const dist = Math.hypot(dx, dy) || 1;
-        const delta = dist - idealLength;
-        const force = spring * delta;
-        const fx = (force * dx) / dist;
-        const fy = (force * dy) / dist;
-
-        sourceNode.fx += fx;
-        sourceNode.fy += fy;
-        targetNode.fx -= fx;
-        targetNode.fy -= fy;
-      }
-
-      for (const node of nodes) {
-        node.fx += -node.x * centerPull;
-        node.fy += -node.y * centerPull;
-
-        node.vx = (node.vx + node.fx) * damping;
-        node.vy = (node.vy + node.fy) * damping;
-
-        node.x += node.vx;
-        node.y += node.vy;
-      }
-    }
-  }
-
-  initializeForceLayout();
-
-  function createSvgElement(tagName, attrs = {}) {
-    const element = document.createElementNS("http://www.w3.org/2000/svg", tagName);
-    for (const [name, value] of Object.entries(attrs)) {
-      if (value === undefined || value === null) continue;
-      element.setAttribute(name, String(value));
-    }
-    return element;
-  }
-
-  const edgeVisuals = [];
-  const nodeElements = new Map();
-
+  const neighborMap = new Map(nodes.map((node) => [node.id, new Set()]));
   for (const edge of edges) {
-    const group = createSvgElement("g", { class: "graph-edge" });
-    const line = createSvgElement("path", { class: "graph-edge-line" });
-    const arrow = createSvgElement("path", {
-      class: "graph-edge-arrow",
-      d: "M -10 -5.5 L 0 0 L -10 5.5",
-    });
-
-    const sourceNode = nodeMap.get(edge.source);
-    const targetNode = nodeMap.get(edge.target);
-    const generationCol = sourceNode && targetNode ? Math.min(sourceNode.col, targetNode.col) : 0;
-    const edgeTone = edgeToneForGeneration(generationCol);
-    group.style.setProperty("--edge-line", edgeTone.line);
-    group.style.setProperty("--edge-arrow", edgeTone.arrow);
-    group.style.setProperty("--edge-line-active", edgeTone.activeLine);
-    group.style.setProperty("--edge-arrow-active", edgeTone.activeArrow);
-
-    group.appendChild(line);
-    group.appendChild(arrow);
-    edgeLayer.appendChild(group);
-
-    edgeVisuals.push({
-      source: edge.source,
-      target: edge.target,
-      group,
-      line,
-      arrow,
-      generationCol,
-    });
-  }
-
-  for (const node of nodes) {
-    const group = createSvgElement("g", {
-      class: "graph-node",
-      "data-id": node.id,
-      transform: `translate(${node.x} ${node.y})`,
-    });
-
-    const tone = toneForCol(node.col);
-    group.style.setProperty("--node-fill", tone.fill);
-    group.style.setProperty("--node-ring", tone.ring);
-    group.style.setProperty("--node-halo", tone.halo);
-
-    const halo = createSvgElement("circle", {
-      class: "node-halo",
-      cx: 0,
-      cy: 0,
-      r: node.r + 8,
-    });
-
-    const ring = createSvgElement("circle", {
-      class: "node-ring",
-      cx: 0,
-      cy: 0,
-      r: node.r + 1.5,
-    });
-
-    const core = createSvgElement("circle", {
-      class: "node-core",
-      cx: 0,
-      cy: 0,
-      r: node.r,
-    });
-
-    const nameText = createSvgElement("text", {
-      class: "name",
-      x: 0,
-      y: 1,
-    });
-    nameText.textContent = node.label;
-
-    group.appendChild(halo);
-    group.appendChild(ring);
-    group.appendChild(core);
-    group.appendChild(nameText);
-
-    if (node.note) {
-      const noteText = createSvgElement("text", {
-        class: "note",
-        x: 0,
-        y: node.r + 15,
-      });
-      noteText.textContent = node.note;
-      group.appendChild(noteText);
-    }
-
-    nodeLayer.appendChild(group);
-    nodeElements.set(node.id, group);
-  }
-
-  let focusedId = null;
-  let viewportAnimFrame = null;
-  let layoutAnimFrame = null;
-  let edgeGeometryDirty = true;
-
-  const viewport = {
-    x: 0,
-    y: 0,
-    scale: 1,
-  };
-
-  function clampScale(scale) {
-    return Math.max(MIN_SCALE, Math.min(MAX_SCALE, scale));
-  }
-
-  function cancelAllAnimations() {
-    if (viewportAnimFrame) {
-      cancelAnimationFrame(viewportAnimFrame);
-      viewportAnimFrame = null;
-    }
-    if (layoutAnimFrame) {
-      cancelAnimationFrame(layoutAnimFrame);
-      layoutAnimFrame = null;
-    }
-  }
-
-  function fitScaleForBounds(bounds) {
-    const stageWidth = stage.clientWidth;
-    const stageHeight = stage.clientHeight;
-    const drawableWidth = Math.max(40, stageWidth - 70);
-    const drawableHeight = Math.max(40, stageHeight - 30);
-    const scaleX = drawableWidth / Math.max(1, bounds.w);
-    const scaleY = drawableHeight / Math.max(1, bounds.h);
-    return clampScale(Math.min(scaleX, scaleY));
-  }
-
-  function getBoundsForTargets(targets) {
-    let minX = Number.POSITIVE_INFINITY;
-    let maxX = Number.NEGATIVE_INFINITY;
-    let minY = Number.POSITIVE_INFINITY;
-    let maxY = Number.NEGATIVE_INFINITY;
-
-    for (const node of nodes) {
-      const target = targets.get(node.id) || { x: node.x, y: node.y };
-      minX = Math.min(minX, target.x - node.r - 10);
-      maxX = Math.max(maxX, target.x + node.r + 10);
-      minY = Math.min(minY, target.y - node.r - 10);
-      maxY = Math.max(maxY, target.y + node.r + (node.note ? 18 : 0) + 10);
-    }
-
-    if (!Number.isFinite(minX)) {
-      return { minX: -120, maxX: 120, minY: -120, maxY: 120, w: 240, h: 240 };
-    }
-
-    minX -= 90;
-    maxX += 90;
-    minY -= 90;
-    maxY += 90;
-
-    return {
-      minX,
-      maxX,
-      minY,
-      maxY,
-      w: maxX - minX,
-      h: maxY - minY,
-    };
-  }
-
-  function buildOrderedTargetsFrom(centerId) {
-    const centerNode = nodeMap.get(centerId);
-    if (!centerNode) return null;
-
-    const component = new Set([centerId]);
-    const queue = [centerId];
-
-    while (queue.length > 0) {
-      const currentId = queue.shift();
-      const neighbors = neighborMap.get(currentId);
-      if (!neighbors) continue;
-
-      for (const nextId of neighbors) {
-        if (component.has(nextId)) continue;
-        component.add(nextId);
-        queue.push(nextId);
-      }
-    }
-
-    const componentNodes = [];
-    for (const nodeId of component) {
-      const node = nodeMap.get(nodeId);
-      if (node) componentNodes.push(node);
-    }
-
-    if (componentNodes.length === 0) {
-      return null;
-    }
-
-    const lineageSet = computeFocusSet(centerId);
-    const targets = new Map();
-
-    function importanceOf(node) {
-      const lineageBonus = lineageSet.has(node.id) ? 110 : 0;
-      const degree = node.parents.length + node.children.length;
-      const centerDistPenalty = Math.abs(node.col - centerNode.col) * 8;
-      return lineageBonus + degree * 12 - centerDistPenalty;
-    }
-
-    const levels = new Map();
-    function pushLevel(level, node) {
-      if (!levels.has(level)) levels.set(level, []);
-      levels.get(level).push(node);
-    }
-
-    for (const node of componentNodes) {
-      const level = node.col - centerNode.col;
-      pushLevel(level, node);
-    }
-
-    const sortedLevels = [...levels.keys()].sort((a, b) => a - b);
-    const orderByLevel = new Map();
-
-    for (const level of sortedLevels) {
-      const ordered = levels
-        .get(level)
-        .slice()
-        .sort(
-          (a, b) =>
-            importanceOf(b) - importanceOf(a) ||
-            a.order - b.order ||
-            a.label.localeCompare(b.label, "zh-Hant"),
-        );
-      orderByLevel.set(level, ordered);
-    }
-
-    function buildIndexLookup() {
-      const lookup = new Map();
-      for (const level of sortedLevels) {
-        const bucket = orderByLevel.get(level) || [];
-        for (let i = 0; i < bucket.length; i += 1) {
-          lookup.set(bucket[i].id, i);
-        }
-      }
-      return lookup;
-    }
-
-    function sortLevelByNeighbor(level, useParents, indexLookup) {
-      const bucket = orderByLevel.get(level);
-      if (!bucket || bucket.length <= 1) return;
-
-      const decorated = bucket.map((node, idx) => {
-        const refs = useParents ? node.parents : node.children;
-        const anchors = [];
-
-        for (const refId of refs) {
-          if (!component.has(refId)) continue;
-          const refNode = nodeMap.get(refId);
-          if (!refNode) continue;
-
-          const refLevel = refNode.col - centerNode.col;
-          if (useParents && refLevel >= level) continue;
-          if (!useParents && refLevel <= level) continue;
-
-          const anchor = indexLookup.get(refId);
-          if (Number.isFinite(anchor)) anchors.push(anchor);
-        }
-
-        const barycenter =
-          anchors.length > 0
-            ? anchors.reduce((sum, value) => sum + value, 0) / anchors.length
-            : idx;
-
-        return {
-          node,
-          barycenter,
-          importance: importanceOf(node),
-          seed: hashText(node.id) % 1000,
-        };
-      });
-
-      decorated.sort((a, b) => {
-        if (a.barycenter !== b.barycenter) return a.barycenter - b.barycenter;
-        if (a.importance !== b.importance) return b.importance - a.importance;
-        return a.seed - b.seed;
-      });
-
-      orderByLevel.set(
-        level,
-        decorated.map((item) => item.node),
-      );
-    }
-
-    for (let pass = 0; pass < 3; pass += 1) {
-      let indexLookup = buildIndexLookup();
-      for (let i = 1; i < sortedLevels.length; i += 1) {
-        const level = sortedLevels[i];
-        sortLevelByNeighbor(level, true, indexLookup);
-        indexLookup = buildIndexLookup();
-      }
-
-      indexLookup = buildIndexLookup();
-      for (let i = sortedLevels.length - 2; i >= 0; i -= 1) {
-        const level = sortedLevels[i];
-        sortLevelByNeighbor(level, false, indexLookup);
-        indexLookup = buildIndexLookup();
-      }
-    }
-
-    const rowGap = Math.max(154, 114 + Math.sqrt(nodes.length) * 4.8);
-    const colGap = Math.max(122, 92 + Math.sqrt(nodes.length) * 4.1);
-    let widestCount = 1;
-
-    for (const level of sortedLevels) {
-      const bucket = orderByLevel.get(level) || [];
-      widestCount = Math.max(widestCount, bucket.length);
-
-      const span = (bucket.length - 1) * colGap;
-      const startX = -span / 2;
-      const y = level * rowGap;
-
-      for (let i = 0; i < bucket.length; i += 1) {
-        const node = bucket[i];
-        const baseX = startX + i * colGap;
-        const isLineage = lineageSet.has(node.id);
-        const degree = node.parents.length + node.children.length;
-        const sideSign = baseX === 0 ? (hashText(node.id) % 2 === 0 ? -1 : 1) : Math.sign(baseX);
-        const pushOut = isLineage ? 0 : 58 + Math.max(0, 3 - degree) * 26;
-
-        targets.set(node.id, {
-          x: baseX + sideSign * pushOut,
-          y,
-        });
-      }
-    }
-
-    const detachedNodes = nodes
-      .filter((node) => !component.has(node.id))
-      .sort((a, b) => a.col - b.col || a.order - b.order);
-
-    const sideBaseX = Math.max(430, (widestCount * colGap) / 2 + 240);
-    const sideStepX = 86;
-
-    for (let i = 0; i < detachedNodes.length; i += 1) {
-      const node = detachedNodes[i];
-      const side = i % 2 === 0 ? -1 : 1;
-      const lane = Math.floor(i / 2);
-      const y = (node.col - centerNode.col) * rowGap + ((lane % 3) - 1) * 24;
-      const x = side * (sideBaseX + lane * sideStepX);
-      targets.set(node.id, { x, y });
-    }
-
-    return { targets, centerId };
-  }
-
-  function animateLayoutTo(targets, duration = 440) {
-    if (layoutAnimFrame) {
-      cancelAnimationFrame(layoutAnimFrame);
-      layoutAnimFrame = null;
-    }
-
-    const starts = new Map(nodes.map((node) => [node.id, { x: node.x, y: node.y }]));
-    const startTime = performance.now();
-
-    function step(now) {
-      const elapsed = now - startTime;
-      const t = Math.min(1, elapsed / duration);
-      const eased = 1 - Math.pow(1 - t, 3);
-
-      for (const node of nodes) {
-        const start = starts.get(node.id);
-        const target = targets.get(node.id) || start;
-        node.x = start.x + (target.x - start.x) * eased;
-        node.y = start.y + (target.y - start.y) * eased;
-        node.vx = 0;
-        node.vy = 0;
-      }
-
-      edgeGeometryDirty = true;
-      render();
-
-      if (t < 1) {
-        layoutAnimFrame = requestAnimationFrame(step);
-      } else {
-        layoutAnimFrame = null;
-      }
-    }
-
-    layoutAnimFrame = requestAnimationFrame(step);
-  }
-
-  function getPrimaryParentLabel(node) {
-    if (!node.parents.length) return "";
-    const parent = nodeMap.get(node.parents[0]);
-    return parent ? parent.label : "";
+    neighborMap.get(edge.source)?.add(edge.target);
+    neighborMap.get(edge.target)?.add(edge.source);
   }
 
   function generationLabel(colIndex) {
@@ -704,7 +223,146 @@
     return `${column.generation}${column.marker ? ` ${column.marker}` : ""}`.trim();
   }
 
-  function computeFocusSet(nodeId) {
+  const cyElements = [];
+
+  for (const node of nodes) {
+    const tone = toneForCol(node.col);
+    cyElements.push({
+      group: "nodes",
+      data: {
+        id: node.id,
+        label: node.label,
+        note: node.note,
+        displayLabel: node.note ? `${node.label}\n${node.note}` : node.label,
+        col: node.col,
+        order: node.order,
+        size: node.size,
+        fill: tone.fill,
+        ring: tone.ring,
+      },
+    });
+  }
+
+  for (const edge of edges) {
+    const sourceNode = nodeMap.get(edge.source);
+    const targetNode = nodeMap.get(edge.target);
+    const generationCol = sourceNode && targetNode ? Math.min(sourceNode.col, targetNode.col) : 0;
+    const edgeTone = edgeToneForGeneration(generationCol);
+
+    cyElements.push({
+      group: "edges",
+      data: {
+        id: `${edge.source}->${edge.target}`,
+        source: edge.source,
+        target: edge.target,
+        col: generationCol,
+        lineColor: edgeTone.line,
+        arrowColor: edgeTone.arrow,
+        lineColorActive: edgeTone.activeLine,
+        arrowColorActive: edgeTone.activeArrow,
+      },
+    });
+  }
+
+  const cy = window.cytoscape({
+    container: graphCanvas,
+    elements: cyElements,
+    minZoom: MIN_ZOOM,
+    maxZoom: MAX_ZOOM,
+    wheelSensitivity: 0.2,
+    selectionType: "single",
+    style: [
+      {
+        selector: "node",
+        style: {
+          label: "data(displayLabel)",
+          shape: "ellipse",
+          width: "data(size)",
+          height: "data(size)",
+          "background-color": "data(fill)",
+          "border-color": "data(ring)",
+          "border-width": 2,
+          color: "#f4fffb",
+          "font-size": 13,
+          "font-weight": 650,
+          "text-wrap": "wrap",
+          "text-max-width": 96,
+          "text-valign": "center",
+          "text-halign": "center",
+          "text-outline-width": 0,
+          "overlay-opacity": 0,
+          "transition-property": "opacity, border-width, border-color, background-color",
+          "transition-duration": "180ms",
+        },
+      },
+      {
+        selector: "edge",
+        style: {
+          width: 2,
+          "curve-style": "bezier",
+          "line-color": "data(lineColor)",
+          "target-arrow-color": "data(arrowColor)",
+          "target-arrow-shape": "vee",
+          "arrow-scale": 0.95,
+          opacity: 0.93,
+          "overlay-opacity": 0,
+          "transition-property": "opacity, line-color, target-arrow-color",
+          "transition-duration": "180ms",
+        },
+      },
+      {
+        selector: "node.lineage",
+        style: {
+          "border-width": 3,
+          "border-color": "#d6fff0",
+        },
+      },
+      {
+        selector: "node.focused",
+        style: {
+          "border-width": 4,
+          "border-color": "#ffffff",
+          "background-color": "#214463",
+        },
+      },
+      {
+        selector: "node.inactive",
+        style: {
+          opacity: 0.2,
+        },
+      },
+      {
+        selector: "edge.active",
+        style: {
+          "line-color": "data(lineColorActive)",
+          "target-arrow-color": "data(arrowColorActive)",
+          opacity: 1,
+          width: 2.4,
+        },
+      },
+      {
+        selector: "edge.inactive",
+        style: {
+          opacity: 0.12,
+        },
+      },
+    ],
+  });
+
+  let focusedId = null;
+
+  function collectionFromIds(ids) {
+    let collection = cy.collection();
+    for (const id of ids) {
+      const ele = cy.getElementById(id);
+      if (ele && ele.length > 0) {
+        collection = collection.union(ele);
+      }
+    }
+    return collection;
+  }
+
+  function computeLineageSet(nodeId) {
     const lineage = new Set([nodeId]);
 
     const upStack = [nodeId];
@@ -734,251 +392,221 @@
     return lineage;
   }
 
-  function getGraphBounds() {
-    if (nodes.length === 0) {
-      return { minX: -120, maxX: 120, minY: -120, maxY: 120, w: 240, h: 240 };
+  function connectedComponentIds(startId) {
+    const visited = new Set([startId]);
+    const queue = [startId];
+
+    while (queue.length > 0) {
+      const currentId = queue.shift();
+      const neighbors = neighborMap.get(currentId);
+      if (!neighbors) continue;
+
+      for (const nextId of neighbors) {
+        if (visited.has(nextId)) continue;
+        visited.add(nextId);
+        queue.push(nextId);
+      }
     }
 
-    const minX = Math.min(...nodes.map((node) => node.x - node.r - 10)) - 90;
-    const maxX = Math.max(...nodes.map((node) => node.x + node.r + 10)) + 90;
-    const minY = Math.min(...nodes.map((node) => node.y - node.r - 10)) - 90;
-    const maxY = Math.max(...nodes.map((node) => node.y + node.r + (node.note ? 18 : 0) + 10)) + 90;
-
-    return {
-      minX,
-      maxX,
-      minY,
-      maxY,
-      w: maxX - minX,
-      h: maxY - minY,
-    };
+    return visited;
   }
 
-  function applyViewportTransform() {
-    worldLayer.setAttribute("transform", `translate(${viewport.x} ${viewport.y}) scale(${viewport.scale})`);
+  function topRootsInComponent(componentIds) {
+    const roots = [];
+
+    for (const nodeId of componentIds) {
+      const node = nodeMap.get(nodeId);
+      if (!node) continue;
+
+      const hasParentInComponent = node.parents.some((parentId) => componentIds.has(parentId));
+      if (!hasParentInComponent) {
+        roots.push(nodeId);
+      }
+    }
+
+    if (roots.length > 0) {
+      roots.sort((a, b) => {
+        const na = nodeMap.get(a);
+        const nb = nodeMap.get(b);
+        return na.col - nb.col || na.order - nb.order;
+      });
+      return roots;
+    }
+
+    const fallback = [...componentIds].sort((a, b) => {
+      const na = nodeMap.get(a);
+      const nb = nodeMap.get(b);
+      return na.col - nb.col || na.order - nb.order;
+    });
+    return fallback.slice(0, 1);
   }
 
-  function updateFocusInfo() {
+  function placeDetachedNodes(componentIds, duration = 0) {
+    const detachedNodes = nodes
+      .filter((node) => !componentIds.has(node.id))
+      .sort((a, b) => a.col - b.col || a.order - b.order);
+
+    if (detachedNodes.length === 0) return;
+
+    const componentCollection = collectionFromIds(componentIds);
+    const bb = componentCollection.length > 0
+      ? componentCollection.boundingBox({ includeLabels: true })
+      : { x1: -320, x2: 320, y1: -180 };
+
+    const sideBaseX = Math.max(440, (bb.x2 - bb.x1) / 2 + 280);
+    const sideStepX = 92;
+    const rowGap = 116;
+
+    for (let i = 0; i < detachedNodes.length; i += 1) {
+      const node = detachedNodes[i];
+      const ele = cy.getElementById(node.id);
+      if (!ele || ele.length === 0) continue;
+
+      const lane = Math.floor(i / 2);
+      const side = i % 2 === 0 ? -1 : 1;
+      const x = side * (sideBaseX + lane * sideStepX);
+      const y = (node.col - 1) * rowGap + ((lane % 3) - 1) * 24;
+
+      if (duration > 0) {
+        ele.animate({ position: { x, y } }, { duration, easing: "ease-out-cubic" });
+      } else {
+        ele.position({ x, y });
+      }
+    }
+  }
+
+  function updateFocusInfo(lineageSize = 0) {
     if (!focusInfo) return;
+
     if (!focusedId) {
       focusInfo.textContent = "目前：顯示全部族譜";
       return;
     }
 
-    const focusedNode = nodeMap.get(focusedId);
-    if (!focusedNode) {
+    const node = nodeMap.get(focusedId);
+    if (!node) {
       focusInfo.textContent = "目前：顯示全部族譜";
       return;
     }
 
-    const focusSet = computeFocusSet(focusedId);
-    focusInfo.textContent = `目前：已選取 ${focusedNode.label}（直系 ${Math.max(0, focusSet.size - 1)} 人）`;
+    focusInfo.textContent = `目前：已選取 ${node.label}（直系 ${Math.max(0, lineageSize - 1)} 人）`;
   }
 
-  function updateFocusClasses() {
-    const focusSet = focusedId ? computeFocusSet(focusedId) : null;
-
-    for (const node of nodes) {
-      const element = nodeElements.get(node.id);
-      if (!element) continue;
-      const active = !focusSet || focusSet.has(node.id);
-      const isFocused = focusedId === node.id;
-      element.classList.toggle("inactive", !active);
-      element.classList.toggle("focused", isFocused);
-    }
-
-    for (const edgeVisual of edgeVisuals) {
-      if (!focusSet) {
-        edgeVisual.group.classList.remove("inactive");
-        edgeVisual.group.classList.remove("active");
-        continue;
-      }
-
-      const active = focusSet.has(edgeVisual.source) && focusSet.has(edgeVisual.target);
-      edgeVisual.group.classList.toggle("active", active);
-      edgeVisual.group.classList.toggle("inactive", !active);
-    }
-  }
-
-  function edgeEndpoints(sourceNode, targetNode) {
-    const dx = targetNode.x - sourceNode.x;
-    const dy = targetNode.y - sourceNode.y;
-    const dist = Math.hypot(dx, dy) || 1;
-    const ux = dx / dist;
-    const uy = dy / dist;
-
-    const startX = sourceNode.x + ux * (sourceNode.r + 2);
-    const startY = sourceNode.y + uy * (sourceNode.r + 2);
-    const endX = targetNode.x - ux * (targetNode.r + 13);
-    const endY = targetNode.y - uy * (targetNode.r + 13);
-
-    return { startX, startY, endX, endY, dist, ux, uy };
-  }
-
-  function updateEdgeGeometry(edgeVisual) {
-    const sourceNode = nodeMap.get(edgeVisual.source);
-    const targetNode = nodeMap.get(edgeVisual.target);
-    if (!sourceNode || !targetNode) return;
-
-    const points = edgeEndpoints(sourceNode, targetNode);
-    const perpX = -points.uy;
-    const perpY = points.ux;
-    const horizontalDelta = points.endX - points.startX;
-    const bendSign = horizontalDelta === 0 ? 0 : Math.sign(horizontalDelta);
-    const curveAmount = Math.min(20, Math.abs(horizontalDelta) * 0.22) * bendSign;
-
-    const ctrlX = (points.startX + points.endX) / 2 + perpX * curveAmount;
-    const ctrlY = (points.startY + points.endY) / 2 + perpY * curveAmount;
-
-    edgeVisual.line.setAttribute(
-      "d",
-      `M ${points.startX} ${points.startY} Q ${ctrlX} ${ctrlY} ${points.endX} ${points.endY}`,
-    );
-
-    const tanX = points.endX - ctrlX;
-    const tanY = points.endY - ctrlY;
-    const angleDeg = (Math.atan2(tanY, tanX) * 180) / Math.PI;
-    edgeVisual.arrow.setAttribute("transform", `translate(${points.endX} ${points.endY}) rotate(${angleDeg})`);
-  }
-
-  function refreshGeometry() {
-    for (const node of nodes) {
-      const element = nodeElements.get(node.id);
-      if (!element) continue;
-      element.setAttribute("transform", `translate(${node.x} ${node.y})`);
-    }
-
-    for (const edgeVisual of edgeVisuals) {
-      updateEdgeGeometry(edgeVisual);
-    }
-
-    edgeGeometryDirty = false;
-  }
-
-  function render() {
-    if (edgeGeometryDirty) {
-      refreshGeometry();
-    }
-
-    applyViewportTransform();
-    updateFocusClasses();
-  }
-
-  function animateViewportTo(targetX, targetY, targetScale, duration = 260) {
-    if (viewportAnimFrame) {
-      cancelAnimationFrame(viewportAnimFrame);
-      viewportAnimFrame = null;
-    }
-
-    const startX = viewport.x;
-    const startY = viewport.y;
-    const startScale = viewport.scale;
-    const endScale = clampScale(targetScale);
-    const startTime = performance.now();
-
-    function step(now) {
-      const elapsed = now - startTime;
-      const t = Math.min(1, elapsed / duration);
-      const eased = 1 - Math.pow(1 - t, 3);
-
-      viewport.x = startX + (targetX - startX) * eased;
-      viewport.y = startY + (targetY - startY) * eased;
-      viewport.scale = startScale + (endScale - startScale) * eased;
-      render();
-
-      if (t < 1) {
-        viewportAnimFrame = requestAnimationFrame(step);
-      } else {
-        viewportAnimFrame = null;
-      }
-    }
-
-    viewportAnimFrame = requestAnimationFrame(step);
-  }
-
-  function fitView() {
-    const bounds = getGraphBounds();
-    const stageWidth = stage.clientWidth;
-    const stageHeight = stage.clientHeight;
-
-    viewport.scale = fitScaleForBounds(bounds);
-
-    const worldCenterX = (bounds.minX + bounds.maxX) / 2;
-    const worldCenterY = (bounds.minY + bounds.maxY) / 2;
-
-    viewport.x = stageWidth / 2 - worldCenterX * viewport.scale;
-    viewport.y = stageHeight / 2 - worldCenterY * viewport.scale;
-
+  function clearFocusVisualOnly() {
     focusedId = null;
+    cy.nodes().removeClass("focused lineage inactive");
+    cy.edges().removeClass("active inactive");
     updateFocusInfo();
-    render();
   }
 
-  function focusNodeById(nodeId, options = {}) {
-    const { recenter = false, zoomOnCenter = false, relayoutOnFocus = true } = options;
+  function runGlobalLayout(animate) {
+    const rootIds = nodes
+      .filter((node) => node.parents.length === 0)
+      .sort((a, b) => a.col - b.col || a.order - b.order)
+      .map((node) => node.id);
+
+    const roots = collectionFromIds(rootIds.length > 0 ? rootIds : [nodes[0].id]);
+
+    const layout = cy.layout({
+      name: "breadthfirst",
+      directed: true,
+      roots,
+      padding: 80,
+      spacingFactor: 1.12,
+      avoidOverlap: true,
+      animate,
+      animationDuration: animate ? 560 : 0,
+      sort: (a, b) => {
+        const colDelta = a.data("col") - b.data("col");
+        if (colDelta !== 0) return colDelta;
+        return a.data("order") - b.data("order");
+      },
+    });
+
+    layout.on("layoutstop", () => {
+      if (animate) {
+        cy.animate(
+          { fit: { eles: cy.elements(), padding: 90 } },
+          { duration: 460, easing: "ease-out-cubic" },
+        );
+      } else {
+        cy.fit(cy.elements(), 90);
+      }
+    });
+
+    layout.run();
+  }
+
+  function runFocusLayout(nodeId) {
+    const componentIds = connectedComponentIds(nodeId);
+    const componentNodes = collectionFromIds(componentIds);
+    const roots = collectionFromIds(topRootsInComponent(componentIds));
+
+    const layout = componentNodes.layout({
+      name: "breadthfirst",
+      directed: true,
+      roots,
+      padding: 70,
+      spacingFactor: 1.1,
+      avoidOverlap: true,
+      animate: true,
+      animationDuration: 540,
+      sort: (a, b) => {
+        const colDelta = a.data("col") - b.data("col");
+        if (colDelta !== 0) return colDelta;
+        return a.data("order") - b.data("order");
+      },
+    });
+
+    layout.on("layoutstop", () => {
+      placeDetachedNodes(componentIds, 420);
+      cy.animate(
+        { fit: { eles: componentNodes, padding: 96 } },
+        { duration: 480, easing: "ease-out-cubic" },
+      );
+    });
+
+    layout.run();
+  }
+
+  function applyFocus(nodeId, relayout = true) {
     const node = nodeMap.get(nodeId);
     if (!node) return;
 
     focusedId = nodeId;
+    const lineageSet = computeLineageSet(nodeId);
 
-    if (recenter) {
-      let focusTarget = { x: node.x, y: node.y };
-      let targetScale = zoomOnCenter ? Math.max(viewport.scale, 0.72) : viewport.scale;
-
-      if (relayoutOnFocus) {
-        const layout = buildOrderedTargetsFrom(nodeId);
-        if (layout) {
-          const bounds = getBoundsForTargets(layout.targets);
-          const fitScale = fitScaleForBounds(bounds);
-          targetScale = zoomOnCenter
-            ? Math.max(fitScale, Math.min(1.02, viewport.scale))
-            : fitScale;
-          focusTarget = layout.targets.get(nodeId) || focusTarget;
-          animateLayoutTo(layout.targets, 460);
-        }
+    cy.nodes().forEach((n) => {
+      const id = n.id();
+      if (lineageSet.has(id)) {
+        n.removeClass("inactive");
+        n.addClass("lineage");
+      } else {
+        n.removeClass("lineage");
+        n.addClass("inactive");
       }
+    });
 
-      const targetX = stage.clientWidth / 2 - focusTarget.x * targetScale;
-      const targetY = stage.clientHeight / 2 - focusTarget.y * targetScale;
-      updateFocusInfo();
-      animateViewportTo(targetX, targetY, targetScale, 460);
-      return;
+    cy.edges().forEach((edge) => {
+      const active = lineageSet.has(edge.data("source")) && lineageSet.has(edge.data("target"));
+      edge.toggleClass("active", active);
+      edge.toggleClass("inactive", !active);
+    });
+
+    const focusedNodeEle = cy.getElementById(nodeId);
+    cy.nodes().removeClass("focused");
+    focusedNodeEle.addClass("focused");
+
+    updateFocusInfo(lineageSet.size);
+
+    if (relayout) {
+      runFocusLayout(nodeId);
+    } else {
+      cy.animate(
+        { fit: { eles: focusedNodeEle, padding: 160 } },
+        { duration: 280, easing: "ease-out-cubic" },
+      );
     }
-
-    updateFocusInfo();
-    render();
-  }
-
-  function localToWorld(localX, localY) {
-    return {
-      x: (localX - viewport.x) / viewport.scale,
-      y: (localY - viewport.y) / viewport.scale,
-    };
-  }
-
-  function clientToLocal(clientX, clientY) {
-    const rect = stage.getBoundingClientRect();
-    return {
-      x: clientX - rect.left,
-      y: clientY - rect.top,
-    };
-  }
-
-  function zoomAtLocal(localX, localY, targetScale) {
-    const world = localToWorld(localX, localY);
-    viewport.scale = clampScale(targetScale);
-    viewport.x = localX - world.x * viewport.scale;
-    viewport.y = localY - world.y * viewport.scale;
-    render();
-  }
-
-  function zoomAtCenter(factor) {
-    zoomAtLocal(stage.clientWidth / 2, stage.clientHeight / 2, viewport.scale * factor);
-  }
-
-  function zoomAtClient(clientX, clientY, targetScale) {
-    const local = clientToLocal(clientX, clientY);
-    zoomAtLocal(local.x, local.y, targetScale);
   }
 
   function renderSearchResults(keyword) {
@@ -1021,7 +649,7 @@
       title.textContent = node.label;
 
       const info = document.createElement("small");
-      const parentLabel = getPrimaryParentLabel(node);
+      const parentLabel = node.parents.length > 0 ? nodeMap.get(node.parents[0])?.label || "" : "";
       info.textContent = parentLabel
         ? `${generationLabel(node.col)} ｜上代：${parentLabel}`
         : generationLabel(node.col);
@@ -1030,201 +658,63 @@
       item.appendChild(info);
 
       item.addEventListener("click", () => {
-        focusNodeById(node.id, { recenter: true, zoomOnCenter: true });
+        applyFocus(node.id, true);
       });
 
       searchResults.appendChild(item);
     }
   }
 
-  const activePointers = new Map();
-  let pointerStart = null;
-  let pressedNodeId = null;
-  let pressedBlank = false;
-  let isPanning = false;
-  let panAnchor = null;
-  let pinchState = null;
-  let dragNodeId = null;
-  let dragOffsetWorld = { x: 0, y: 0 };
-  let movedSinceDown = false;
+  function animateZoomBy(factor) {
+    const rect = stage.getBoundingClientRect();
+    const center = { x: rect.width / 2, y: rect.height / 2 };
 
-  function pointerDistance(a, b) {
-    return Math.hypot(a.x - b.x, a.y - b.y);
-  }
+    const oldZoom = cy.zoom();
+    const nextZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, oldZoom * factor));
+    const pan = cy.pan();
 
-  function clearInteractionFlags() {
-    pointerStart = null;
-    pressedNodeId = null;
-    pressedBlank = false;
-    isPanning = false;
-    panAnchor = null;
-    dragNodeId = null;
-    movedSinceDown = false;
-    svg.classList.remove("is-panning");
-  }
+    const worldX = (center.x - pan.x) / oldZoom;
+    const worldY = (center.y - pan.y) / oldZoom;
 
-  function startPinchIfReady() {
-    if (activePointers.size < 2) return;
-
-    const points = [...activePointers.values()];
-    const pointA = points[0];
-    const pointB = points[1];
-
-    const centerClientX = (pointA.x + pointB.x) / 2;
-    const centerClientY = (pointA.y + pointB.y) / 2;
-    const centerLocal = clientToLocal(centerClientX, centerClientY);
-
-    pinchState = {
-      startDist: Math.max(1, pointerDistance(pointA, pointB)),
-      startScale: viewport.scale,
-      startWorld: localToWorld(centerLocal.x, centerLocal.y),
+    const nextPan = {
+      x: center.x - worldX * nextZoom,
+      y: center.y - worldY * nextZoom,
     };
 
-    clearInteractionFlags();
+    cy.animate(
+      { zoom: nextZoom, pan: nextPan },
+      { duration: 220, easing: "ease-out-cubic" },
+    );
   }
 
-  svg.addEventListener("pointerdown", (event) => {
-    cancelAllAnimations();
-    activePointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
-    svg.setPointerCapture(event.pointerId);
-
-    pointerStart = { x: event.clientX, y: event.clientY };
-    movedSinceDown = false;
-
-    startPinchIfReady();
-    if (pinchState) return;
-
-    const nodeElement = event.target.closest(".graph-node");
-    const local = clientToLocal(event.clientX, event.clientY);
-
-    if (nodeElement) {
-      const nodeId = nodeElement.getAttribute("data-id") || "";
-      const node = nodeMap.get(nodeId);
-      if (!node) return;
-
-      pressedNodeId = nodeId;
-      dragNodeId = nodeId;
-      pressedBlank = false;
-      isPanning = false;
-      panAnchor = null;
-
-      const worldPoint = localToWorld(local.x, local.y);
-      dragOffsetWorld = {
-        x: worldPoint.x - node.x,
-        y: worldPoint.y - node.y,
-      };
-
-      return;
-    }
-
-    pressedNodeId = null;
-    dragNodeId = null;
-    pressedBlank = true;
-    isPanning = true;
-    panAnchor = {
-      x: local.x - viewport.x,
-      y: local.y - viewport.y,
-    };
-    svg.classList.add("is-panning");
+  cy.on("tap", "node", (event) => {
+    const nodeId = event.target.id();
+    applyFocus(nodeId, true);
   });
 
-  svg.addEventListener("pointermove", (event) => {
-    if (activePointers.has(event.pointerId)) {
-      activePointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
-    }
-
-    if (pinchState && activePointers.size >= 2) {
-      const points = [...activePointers.values()];
-      const pointA = points[0];
-      const pointB = points[1];
-
-      const centerClientX = (pointA.x + pointB.x) / 2;
-      const centerClientY = (pointA.y + pointB.y) / 2;
-      const centerLocal = clientToLocal(centerClientX, centerClientY);
-      const currentDist = Math.max(1, pointerDistance(pointA, pointB));
-
-      viewport.scale = clampScale(pinchState.startScale * (currentDist / pinchState.startDist));
-      viewport.x = centerLocal.x - pinchState.startWorld.x * viewport.scale;
-      viewport.y = centerLocal.y - pinchState.startWorld.y * viewport.scale;
-
-      render();
-      return;
-    }
-
-    if (dragNodeId) {
-      const movedDistance = pointerStart
-        ? Math.hypot(event.clientX - pointerStart.x, event.clientY - pointerStart.y)
-        : 0;
-      if (movedDistance > 4) {
-        movedSinceDown = true;
-      }
-
-      if (movedSinceDown) {
-        const node = nodeMap.get(dragNodeId);
-        if (!node) return;
-
-        const local = clientToLocal(event.clientX, event.clientY);
-        const worldPoint = localToWorld(local.x, local.y);
-
-        node.x = worldPoint.x - dragOffsetWorld.x;
-        node.y = worldPoint.y - dragOffsetWorld.y;
-
-        edgeGeometryDirty = true;
-        render();
-      }
-      return;
-    }
-
-    if (isPanning && panAnchor) {
-      const local = clientToLocal(event.clientX, event.clientY);
-      viewport.x = local.x - panAnchor.x;
-      viewport.y = local.y - panAnchor.y;
-      render();
-    }
+  cy.on("tap", (event) => {
+    if (event.target !== cy) return;
+    clearFocusVisualOnly();
   });
 
-  svg.addEventListener("pointerup", (event) => {
-    activePointers.delete(event.pointerId);
+  if (resetBtn) {
+    resetBtn.addEventListener("click", () => {
+      clearFocusVisualOnly();
+      runGlobalLayout(true);
+    });
+  }
 
-    if (pinchState && activePointers.size < 2) {
-      pinchState = null;
-      clearInteractionFlags();
-      return;
-    }
+  if (zoomInBtn) {
+    zoomInBtn.addEventListener("click", () => {
+      animateZoomBy(1.14);
+    });
+  }
 
-    const movedDistance = pointerStart
-      ? Math.hypot(event.clientX - pointerStart.x, event.clientY - pointerStart.y)
-      : 0;
-    const moved = movedSinceDown || movedDistance > 6;
-
-    if (!moved && pressedNodeId) {
-      focusNodeById(pressedNodeId, { recenter: true, zoomOnCenter: false });
-    } else if (!moved && pressedBlank) {
-      focusedId = null;
-      updateFocusInfo();
-      render();
-    }
-
-    clearInteractionFlags();
-  });
-
-  svg.addEventListener("pointercancel", (event) => {
-    activePointers.delete(event.pointerId);
-    if (activePointers.size < 2) {
-      pinchState = null;
-    }
-    clearInteractionFlags();
-  });
-
-  svg.addEventListener(
-    "wheel",
-    (event) => {
-      event.preventDefault();
-      const factor = event.deltaY < 0 ? 1.1 : 0.9;
-      zoomAtClient(event.clientX, event.clientY, viewport.scale * factor);
-    },
-    { passive: false },
-  );
+  if (zoomOutBtn) {
+    zoomOutBtn.addEventListener("click", () => {
+      animateZoomBy(0.88);
+    });
+  }
 
   if (searchInput) {
     searchInput.addEventListener("input", () => {
@@ -1240,37 +730,6 @@
     });
   }
 
-  if (resetBtn) {
-    resetBtn.addEventListener("click", () => {
-      fitView();
-    });
-  }
-
-  if (zoomInBtn) {
-    zoomInBtn.addEventListener("click", () => {
-      zoomAtCenter(1.12);
-    });
-  }
-
-  if (zoomOutBtn) {
-    zoomOutBtn.addEventListener("click", () => {
-      zoomAtCenter(0.88);
-    });
-  }
-
-  window.addEventListener("resize", () => {
-    render();
-  });
-
-  fitView();
+  runGlobalLayout(false);
   renderSearchResults("");
 })();
-
-
-
-
-
-
-
-
-
