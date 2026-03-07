@@ -15,7 +15,7 @@
   const familyRadialBtn = document.getElementById("familyRadialBtn");
   const autoZoomToggle = document.getElementById("autoZoomToggle");
 
-  const APP_VERSION = "v2026.03.07-14";
+  const APP_VERSION = "v2026.03.07-15";
 
   if (versionBadge) {
     versionBadge.textContent = `版本 ${APP_VERSION}`;
@@ -392,6 +392,74 @@
     return collection;
   }
 
+  function buildFocusCollection(centerId, nodeIdSet, lineageSet) {
+    if (!centerId) return cy.collection();
+
+    const focusIds = new Set();
+    const addNode = (id) => {
+      if (!id) return;
+      if (nodeIdSet && !nodeIdSet.has(id)) return;
+      focusIds.add(id);
+    };
+
+    addNode(centerId);
+    const centerNode = nodeById(centerId);
+    if (centerNode) {
+      for (const parentId of centerNode.parents) addNode(parentId);
+      for (const childId of centerNode.children) addNode(childId);
+    }
+
+    if (lineageSet && lineageSet.size > 0) {
+      for (const lineageId of lineageSet) {
+        addNode(lineageId);
+        if (focusIds.size >= 28) break;
+      }
+    }
+
+    return collectionFromIds(focusIds);
+  }
+
+  function applyFocusViewport(centerId, nodeIdSet, lineageSet, fitPadding, animate, fallbackEles) {
+    if (!centerId) return;
+
+    const centerEle = cy.getElementById(centerId);
+    if (!centerEle || centerEle.length === 0) return;
+
+    const focusCollection = buildFocusCollection(centerId, nodeIdSet, lineageSet);
+    const targetEles = focusCollection.length > 0
+      ? focusCollection
+      : (fallbackEles && fallbackEles.length > 0 ? fallbackEles : centerEle);
+    const focusPadding = Math.max(56, fitPadding - 14);
+    const zoomFloor = viewMode === "family" ? 0.82 : 0.62;
+
+    if (animate) {
+      cy.animate(
+        { fit: { eles: targetEles, padding: focusPadding } },
+        {
+          duration: 320,
+          easing: "ease-out-cubic",
+          complete: () => {
+            const targetZoom = Math.min(MAX_ZOOM, Math.max(cy.zoom(), zoomFloor));
+            cy.animate(
+              { center: { eles: centerEle }, zoom: targetZoom },
+              { duration: 220, easing: "ease-out-cubic" },
+            );
+          },
+        },
+      );
+      return;
+    }
+
+    cy.fit(targetEles, focusPadding);
+    cy.center(centerEle);
+    if (cy.zoom() < zoomFloor) {
+      cy.zoom({
+        level: zoomFloor,
+        renderedPosition: centerEle.renderedPosition(),
+      });
+    }
+  }
+
   function nodeById(id) {
     return id ? nodeMap.get(id) : null;
   }
@@ -680,6 +748,7 @@
     const lineageSet = options.lineageSet || new Set();
     const primaryLineIds = options.primaryLineIds || new Set();
     const keepLineCentered = Boolean(options.keepLineCentered);
+    const centerOnFocused = options.centerOnFocused !== false;
     const autoFit = options.autoFit !== false;
 
     const nodeCollection = collectionFromIds(nodeIdSet);
@@ -745,7 +814,9 @@
 
       const visibleEles = nodeCollection.union(edgeCollection);
       if (autoFit) {
-        if (animate) {
+        if (centerOnFocused && centerId) {
+          applyFocusViewport(centerId, nodeIdSet, lineageSet, fitPadding, animate, visibleEles);
+        } else if (animate) {
           cy.animate(
             { fit: { eles: visibleEles, padding: fitPadding } },
             { duration: 380, easing: "ease-out-cubic" },
@@ -776,11 +847,9 @@
     }
     if (familyTreeBtn) {
       familyTreeBtn.classList.toggle("is-active", familyLayoutStyle === "tree");
-      familyTreeBtn.disabled = viewMode !== "family";
     }
     if (familyRadialBtn) {
       familyRadialBtn.classList.toggle("is-active", familyLayoutStyle === "radial");
-      familyRadialBtn.disabled = viewMode !== "family";
     }
     if (autoZoomToggle) {
       autoZoomToggle.checked = autoZoomOnFocus;
@@ -817,7 +886,7 @@
       : "目前：全圖模式（未選取）";
   }
 
-  function renderFamilyView(animateLayout) {
+  function renderFamilyView(animateLayout, centerOnFocused) {
     const centerId = familyCenterId || focusedId || getDefaultCenterId();
     if (!centerId) return;
 
@@ -849,6 +918,7 @@
       lineageSet: lineage,
       primaryLineIds,
       keepLineCentered: familyLayoutStyle === "tree",
+      centerOnFocused,
       autoFit: autoZoomOnFocus,
     }, () => {
       updateFocusInfo(lineage.size, visibleNodeIds.size, centerId);
@@ -868,11 +938,12 @@
 
     if (animateLayout) {
       runLayoutForNodeSet(allNodeIds, allEdgeIds, true, 90, {
-        layoutType: "tree",
+        layoutType: familyLayoutStyle,
         centerId: focusedId,
         lineageSet: lineage,
         primaryLineIds,
         keepLineCentered: Boolean(focusedId),
+        centerOnFocused,
         autoFit: autoZoomOnFocus,
       }, () => {
         updateFocusInfo(lineage.size, allNodeIds.size, focusedId);
@@ -881,13 +952,7 @@
     }
 
     if (centerOnFocused && focusedId && autoZoomOnFocus) {
-      const focusNode = cy.getElementById(focusedId);
-      if (focusNode && focusNode.length > 0) {
-        cy.animate(
-          { fit: { eles: focusNode, padding: 170 } },
-          { duration: 260, easing: "ease-out-cubic" },
-        );
-      }
+      applyFocusViewport(focusedId, allNodeIds, lineage, 114, true, collectionFromIds(allNodeIds));
     }
 
     updateFocusInfo(lineage.size, allNodeIds.size, focusedId);
@@ -904,7 +969,7 @@
     updateModeButtons();
 
     if (viewMode === "family") {
-      renderFamilyView(relayout ? animate : false);
+      renderFamilyView(relayout ? animate : false, centerOnFocused);
     } else {
       renderFullView(relayout ? animate : false, centerOnFocused && animate);
     }
@@ -1061,11 +1126,7 @@
     familyTreeBtn.addEventListener("click", () => {
       if (familyLayoutStyle === "tree") return;
       familyLayoutStyle = "tree";
-      if (viewMode === "family") {
-        renderCurrentView({ animate: true, relayout: true, centerOnFocused: true });
-      } else {
-        updateModeButtons();
-      }
+      renderCurrentView({ animate: true, relayout: true, centerOnFocused: true });
     });
   }
 
@@ -1073,11 +1134,7 @@
     familyRadialBtn.addEventListener("click", () => {
       if (familyLayoutStyle === "radial") return;
       familyLayoutStyle = "radial";
-      if (viewMode === "family") {
-        renderCurrentView({ animate: true, relayout: true, centerOnFocused: true });
-      } else {
-        updateModeButtons();
-      }
+      renderCurrentView({ animate: true, relayout: true, centerOnFocused: true });
     });
   }
 
@@ -1085,6 +1142,9 @@
     autoZoomToggle.addEventListener("change", () => {
       autoZoomOnFocus = Boolean(autoZoomToggle.checked);
       updateModeButtons();
+      if (autoZoomOnFocus && focusedId) {
+        renderCurrentView({ animate: true, relayout: false, centerOnFocused: true });
+      }
     });
   }
   if (sideBranchToggle) {
@@ -1138,37 +1198,5 @@
   renderSearchResults("");
   setViewMode("family", { animate: false });
 })();
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
