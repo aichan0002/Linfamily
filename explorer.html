@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>林氏忠孝堂族譜 Explorer</title>
+    <link rel="stylesheet" href="./explorer.css" />
+  </head>
+  <body>
+    <div class="explorer-shell">
+      <aside class="sidebar">
+        <div class="brand-card">
+          <p class="eyebrow">Lin Family Graph</p>
+          <h1>林氏忠孝堂族譜 Explorer</h1>
+          <p class="lead">
+            這是獨立於原始頁面的探索版。視覺風格參考你提供的 graph 頁面，改成以搜尋、聚焦、關係探索為主。
+          </p>
+          <div class="brand-actions">
+            <a class="ghost-link" href="./index.html">回原始族譜頁</a>
+            <button id="resetViewBtn" type="button">重設視圖</button>
+          </div>
+        </div>
+
+        <section class="panel-card">
+          <div class="panel-head">
+            <h2>快速搜尋</h2>
+            <span id="versionBadge" class="version-badge">版本 --</span>
+          </div>
+          <input id="searchInput" class="search-input" type="text" placeholder="輸入姓名或註記關鍵字" autocomplete="off" />
+          <div id="searchResults" class="search-results" role="listbox" aria-label="搜尋結果"></div>
+        </section>
+
+        <section class="panel-card stats-card">
+          <div class="stat">
+            <span class="stat-label">人物節點</span>
+            <strong id="nodeCount">0</strong>
+          </div>
+          <div class="stat">
+            <span class="stat-label">關係連線</span>
+            <strong id="edgeCount">0</strong>
+          </div>
+          <div class="stat">
+            <span class="stat-label">目前焦點</span>
+            <strong id="focusName">全部族譜</strong>
+          </div>
+        </section>
+
+        <section class="panel-card controls-card">
+          <h2>圖譜操作</h2>
+          <div class="controls-grid">
+            <button id="showAllBtn" type="button">顯示全部</button>
+            <button id="focusFamilyBtn" type="button">聚焦家系</button>
+            <button id="relayoutBtn" type="button">重新排列</button>
+            <button id="centerBtn" type="button">置中焦點</button>
+          </div>
+          <label class="toggle-row" for="labelsToggle">
+            <input id="labelsToggle" type="checkbox" checked />
+            顯示全部姓名標籤
+          </label>
+          <label class="toggle-row" for="notesToggle">
+            <input id="notesToggle" type="checkbox" checked />
+            顯示人物附註
+          </label>
+        </section>
+
+        <section class="panel-card detail-card">
+          <h2>人物資訊</h2>
+          <div id="detailContent" class="detail-content">
+            <p class="detail-empty">點選圖上的人物後，這裡會顯示其直系、旁系與人物附註。</p>
+          </div>
+        </section>
+      </aside>
+
+      <main class="canvas-stage">
+        <div class="canvas-backdrop"></div>
+        <div class="floating-tag">Graph Explorer</div>
+        <div id="graphCanvas" class="graph-canvas" aria-label="林氏忠孝堂族譜探索圖"></div>
+      </main>
+    </div>
+
+    <script src="./familyData.js"></script>
+    <script src="https://unpkg.com/cytoscape@3.30.4/dist/cytoscape.min.js"></script>
+    <script src="https://unpkg.com/dagre@0.8.5/dist/dagre.min.js"></script>
+    <script src="https://unpkg.com/cytoscape-dagre@2.5.0/cytoscape-dagre.js"></script>
+    <script src="./explorer.js"></script>
+  </body>
+</html>
