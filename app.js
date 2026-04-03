@@ -6,6 +6,10 @@ const zoomOutBtn = document.getElementById("zoomOutBtn");
 const zoomInBtn = document.getElementById("zoomInBtn");
 const searchInput = document.getElementById("searchInput");
 const searchResults = document.getElementById("searchResults");
+const controlPanel = document.getElementById("controlPanel");
+const panelToggleBtn = document.getElementById("panelToggleBtn");
+
+const mobilePanelQuery = window.matchMedia("(max-width: 980px)");
 
 const columns = Array.isArray(window.FAMILY_COLUMNS)
   ? window.FAMILY_COLUMNS.map((c) => ({
@@ -198,7 +202,7 @@ function measureNodeSizes() {
 }
 
 const viewport = { x: 0, y: 0, scale: 1 };
-const minScale = 0.08;
+const minScale = 0.02;
 const maxScale = 2.5;
 const headerOverlayHeight = 42;
 let pressedNodeId = null;
@@ -214,6 +218,22 @@ function generationLabel(colIndex) {
   const column = columns[colIndex];
   if (!column) return "";
   return `${column.generation}${column.marker ? ` ${column.marker}` : ""}`.trim();
+}
+
+function setPanelCollapsed(collapsed) {
+  if (!controlPanel || !panelToggleBtn) return;
+  controlPanel.classList.toggle("is-collapsed", collapsed);
+  panelToggleBtn.setAttribute("aria-expanded", String(!collapsed));
+  panelToggleBtn.textContent = collapsed ? "展開" : "收合";
+}
+
+function syncPanelStateByViewport() {
+  setPanelCollapsed(mobilePanelQuery.matches);
+}
+
+function resetViewLayout() {
+  resizeCanvas();
+  fitView();
 }
 
 function getParentLabel(node) {
@@ -567,11 +587,31 @@ function fitView() {
   const bounds = getBounds();
   const w = canvas.clientWidth;
   const h = canvas.clientHeight;
-  const sx = (w - 64) / bounds.w;
-  const sy = (h - 48) / bounds.h;
-  viewport.scale = Math.max(minScale, Math.min(maxScale, Math.min(sx, sy)));
-  viewport.x = w / 2 - ((bounds.minX + bounds.maxX) / 2) * viewport.scale;
-  viewport.y = h / 2 - ((bounds.minY + bounds.maxY) / 2) * viewport.scale;
+  const isMobileViewport = mobilePanelQuery.matches;
+  const mobileTopNode =
+    nodes.length > 0
+      ? nodes.reduce((topNode, node) =>
+          node.y - node.h / 2 < topNode.y - topNode.h / 2 ? node : topNode
+        )
+      : null;
+
+  if (isMobileViewport && mobileTopNode) {
+    const horizontalPadding = 32;
+    const leftPadding = 18;
+    const topPadding = headerOverlayHeight + 12;
+    const widthFitScale = (w - horizontalPadding) / bounds.w;
+    viewport.scale = Math.max(minScale, Math.min(maxScale, widthFitScale));
+    viewport.x = leftPadding - bounds.minX * viewport.scale;
+    viewport.y = topPadding - (mobileTopNode.y - mobileTopNode.h / 2) * viewport.scale;
+  } else {
+    const horizontalPadding = 64;
+    const verticalPadding = 48;
+    const sx = (w - horizontalPadding) / bounds.w;
+    const sy = (h - verticalPadding) / bounds.h;
+    viewport.scale = Math.max(minScale, Math.min(maxScale, Math.min(sx, sy)));
+    viewport.x = w / 2 - ((bounds.minX + bounds.maxX) / 2) * viewport.scale;
+    viewport.y = h / 2 - ((bounds.minY + bounds.maxY) / 2) * viewport.scale;
+  }
   focusedId = null;
   focusInfo.textContent = "目前：顯示全部族譜";
   draw();
@@ -783,6 +823,14 @@ if (searchInput) {
   });
 }
 
+if (panelToggleBtn) {
+  panelToggleBtn.addEventListener("click", () => {
+    const collapsed = controlPanel?.classList.contains("is-collapsed");
+    setPanelCollapsed(!collapsed);
+    requestAnimationFrame(resetViewLayout);
+  });
+}
+
 resetBtn.addEventListener("click", fitView);
 if (zoomInBtn) {
   zoomInBtn.addEventListener("click", () => zoomAtCenter(1.12));
@@ -796,7 +844,20 @@ window.addEventListener("resize", () => {
   draw();
 });
 
+if (typeof mobilePanelQuery.addEventListener === "function") {
+  mobilePanelQuery.addEventListener("change", () => {
+    syncPanelStateByViewport();
+    requestAnimationFrame(resetViewLayout);
+  });
+} else if (typeof mobilePanelQuery.addListener === "function") {
+  mobilePanelQuery.addListener(() => {
+    syncPanelStateByViewport();
+    requestAnimationFrame(resetViewLayout);
+  });
+}
+
 resizeCanvas();
 measureNodeSizes();
-fitView();
+syncPanelStateByViewport();
+requestAnimationFrame(resetViewLayout);
 renderSearchResults("");
